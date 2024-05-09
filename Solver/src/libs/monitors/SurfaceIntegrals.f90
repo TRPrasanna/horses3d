@@ -134,7 +134,6 @@ module SurfaceIntegrals
 !
          integer                       :: i, j      ! Face indices
          real(kind=RP)                 :: p, tau(NDIM,NDIM)
-         real(kind=RP)                 :: invRho, invRho2, uDivRho(NDIM)
          type(NodalStorage_t), pointer :: spAxi, spAeta
 !
 !        Initialization
@@ -224,14 +223,7 @@ module SurfaceIntegrals
 !              Compute the integral
 !              --------------------
                call getStressTensor(Q(:,i,j),U_x(:,i,j),U_y(:,i,j),U_z(:,i,j), tau)
-
-               invRho  = 1._RP / Q(IRHO,i,j)
-               invRho2 = invRho * invRho
-            
-               uDivRho = [Q(IRHOU,i,j) , Q(IRHOV,i,j) , Q(IRHOW,i,j) ] * invRho2
-            
-               val = val + (invRho * U_y(IRHOU,i,j) - uDivRho(1) * U_y(IRHO,i,j)) &
-                         * f % geom % jacobian(i,j) * spAxi % w(i) * spAeta % w(j) 
+               val = val + tau(IY,IX) * f % geom % jacobian(i,j) * spAxi % w(i) * spAeta % w(j) 
             end do          ;    end do
             end associate
 

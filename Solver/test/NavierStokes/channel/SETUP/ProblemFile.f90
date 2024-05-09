@@ -456,11 +456,9 @@ do eID = 1, mesh % no_of_elements
             type(Monitor_t), intent(in) :: monitors
             integer         :: zoneID, fID, zfID, eID, j, k, i
 
-            !DomainVol = Monitors % volumeMonitors(1) % values(1,1)
             SurfArea = Monitors % surfaceMonitors(1) % values(1)
 
             tauwallavg = Monitors % surfaceMonitors(2) % values(1) / SurfArea ! my way
-            !tauwallavg = Monitors % surfaceMonitors(2) % values(1) ! Gus' way
             rhouavg = Monitors % volumeMonitors(1) % values(1,1)
             rhoavg  = Monitors % volumeMonitors(2) % values(1,1)
             u1b   = rhouavg/rhoavg ! bulk velocity
@@ -471,36 +469,15 @@ do eID = 1, mesh % no_of_elements
       !     Update mass flux and forcing term
       !
             !mass_flux(2) = rhouavg
-            g            = aLz*aLy*force(1) + 2.0_RP*aLz*tauwallavg/ Reyn ! my way
-            !g            = aLz*aLy*force(1) + 0.5_RP*aLy*tauwallavg/(aLx*Reyn) ! Gus' way
-            mass_flux(3) = mass_flux(2) - dt*g ! my way
-            !mass_flux(3) = mass_flux(2) - dt*g/(aLy*aLz) ! Gus' way
+            g            = aLz*aLy*force(1) + 2.0_RP*aLz*tauwallavg !/ Reyn ! mu has to be multiplied by reference Re, check why
+            mass_flux(3) = mass_flux(2) - dt*g
             force(2)     = force(1) + ( alfa*(mass_flux(3)-mass_flux(1))  &
-                           + beta*(mass_flux(2)-mass_flux(1)) ) /(aLz*aLy) ! my way
-            !force(2)     = force(1) + ( alfa*(mass_flux(3)-mass_flux(1))  &
-            !               + beta*(mass_flux(2)-mass_flux(1)) ) ! Gus' way
+                           + beta*(mass_flux(2)-mass_flux(1)) ) /(aLz*aLy)
             
             force(1)     = force(2)
             mass_flux(2) = mass_flux(3)
 !            write(*,*) 'forcing term will be set to ', -force(2), 'tauwallavg is', tauwallavg
 
-!            do zoneID = 1, size (mesh % zones)
-!               if (mesh % zones(zoneID) % Name .eq. "bottomwall") then
-!                  write (*,*) "Of total", size (mesh % zones), " zones, Found bottomwall as zone", zoneID
-!                   fID = mesh % zones(zoneID) % faces(1) ! choose the first face, assuming all faces have same polynomial order
-!                   eID = mesh % faces(fID) % elementIDs(1)
-!                     j = mesh % elements(eID) % Nxyz(1) ! the bottomwall face?
-!                     associate( Nx => mesh % elements(eID) % Nxyz(1), &
-!                                Ny => mesh % elements(eID) % Nxyz(2), &
-!                                Nz => mesh % elements(eID) % Nxyz(3), &
-!                                U_y => mesh % elements(eID) % storage % U_y, &
-!                                Q => mesh % elements(eID) % storage % Q)
-!                        do k = 0, Nz; do i=0, Nx
-!                           !write (*,*) 'dudy is', (U_y(2,i,j,k)-U_y(1,i,j,k)*Q(2,i,j,k)/Q(1,i,j,k))/Q(1,i,j,k)
-!                        end do;     end do
-!                     end associate
-!               end if
-!            end do
             
          END SUBROUTINE UserDefinedPeriodicOperation
 !
@@ -585,4 +562,3 @@ do eID = 1, mesh % no_of_elements
 !
          IMPLICIT NONE  
       END SUBROUTINE UserDefinedTermination
-      
