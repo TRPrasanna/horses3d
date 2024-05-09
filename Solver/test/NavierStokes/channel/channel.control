@@ -1,0 +1,126 @@
+/* Control file for the implicit Navier-Stokes solver */
+Flow equations        = "NS"
+mesh file name        = "MESH/channelsimplelegacy.msh"
+reference length (m) = 1.0d0 ! find the correct value
+polynomial order      = 12
+Output Interval       = 1
+number of time steps = 100000000
+final time = 4400.88d0
+Autosave mode = Time  ! Time
+Autosave interval = 1.0   ! 1.0
+!Autosave mode = Iteration  ! Time
+!Autosave interval = 1
+Convergence tolerance = 1.d-9
+cfl                    = 0.5d0
+dcfl                   = 0.5d0
+mach number            = 0.4d0
+Reynolds number        = 3266.0d0
+!reference density (kg/m^3) = 1.0d0
+reference temperature (k) = 300.0d0
+!sutherland reference temperature = 273.15d0
+!dt = 3.3d-4
+time integration = explicit
+simulation type = steady-state
+explicit method = SSPRK43
+limit timestep = .false.
+limiter minimum = 1.0d-3
+
+solution file name    = "RESULTS/channelsimplep12.hsol"
+save gradients with solution = .true.
+restart               = .true.
+restart file name     = "RESULTS/channelsimplep12_0003868049.hsol"
+!restart polorder = 8
+!restart nodetype = Gauss-Lobatto
+                    Discretization nodes = Gauss-Lobatto
+                          Riemann solver = Matrix dissipation
+                 Inviscid discretization = Split-form
+                              Split form = Chandrasekar
+!                      Gradient variables = Entropy !! this setting changes what U_x refers to
+                  Viscous discretization = BR1
+
+partitioning = SFC
+periodic relative tolerance = .true.
+
+!-------------------------------------------------------------
+! BC
+!-------------------------------------------------------------
+
+
+#define boundary periodicx+
+   type = periodic
+   coupled boundary = periodicx-
+#end
+
+#define boundary periodicx-
+   type = periodic
+   coupled boundary = periodicx+
+#end
+
+#define boundary periodicz+
+   type = periodic
+   coupled boundary = periodicz-
+#end
+
+#define boundary periodicz-
+   type = periodic
+   coupled boundary = periodicz+
+#end
+
+#define boundary topwall__bottomwall
+   type = NoSlipWall
+   wall type (adiabatic/isothermal) = isothermal
+   wall temperature = 300.0d0 ! Kelvin
+#end
+
+!#define volume monitor 1
+!   name = volume
+!   variable = density
+!#end
+
+#define volume monitor 1
+   name = xmassfluxvavg
+   variable = xmassflux
+#end
+
+#define volume monitor 2
+   name = densityvavg
+   variable = density
+#end
+
+#define surface monitor 1
+   name = surfarea
+   marker = bottomwall
+   variable = surfacearea
+#end
+
+#define surface monitor 2
+   name = tauwallbottom
+   marker = bottomwall
+   variable = tauyx
+!   variable = viscous-force
+!   direction = [0.0d0, 1.0d0, 0.0d0]
+#end
+
+!#define surface monitor 3
+!   name = mfrate
+!   marker = periodicx-
+!   variable = flow
+!#end
+
+!#define probe 1
+!   name = wallprobe
+!   variable = u
+!   position = [ 0.d0 , 0.d0 , 0.01d0 ]
+!#end
+
+!#define surface monitor 1
+!   name = dragmonitor
+!   marker = wall1
+!   variable = drag
+!   reference surface = 1.0 ! I chose this arbitrarily for now
+!#end
+
+!surface save utau = .true.
+!surface save gradients = .true.
+!surface save turbulent = .true.
+!boundaries to save = [bottomwall]
