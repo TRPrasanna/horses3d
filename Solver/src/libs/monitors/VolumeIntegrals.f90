@@ -19,7 +19,7 @@ module VolumeIntegrals
 #if defined(NAVIERSTOKES) && (!(SPALARTALMARAS))
    public KINETIC_ENERGY, KINETIC_ENERGY_RATE, KINETIC_ENERGY_BALANCE, ENSTROPHY, VELOCITY
    public ENTROPY, ENTROPY_RATE, INTERNAL_ENERGY, MOMENTUM, SOURCE, PSOURCE, ARTIFICIAL_DISSIPATION
-   public ENTROPY_BALANCE, MATH_ENTROPY
+   public ENTROPY_BALANCE, MATH_ENTROPY, DENSITY, XMASSFLUX
 #endif
 
 #if defined(INCNS)
@@ -43,7 +43,7 @@ module VolumeIntegrals
 #if defined(NAVIERSTOKES) && (!(SPALARTALMARAS))
       enumerator :: KINETIC_ENERGY, KINETIC_ENERGY_RATE, KINETIC_ENERGY_BALANCE
       enumerator :: ENSTROPHY, VELOCITY, ENTROPY, ENTROPY_RATE, INTERNAL_ENERGY, MOMENTUM, SOURCE, PSOURCE
-      enumerator :: ARTIFICIAL_DISSIPATION, ENTROPY_BALANCE, MATH_ENTROPY
+      enumerator :: ARTIFICIAL_DISSIPATION, ENTROPY_BALANCE, MATH_ENTROPY, DENSITY, XMASSFLUX
 #endif
 #if defined(INCNS)
       enumerator :: MASS, ENTROPY, KINETIC_ENERGY_RATE, ENTROPY_RATE
@@ -375,6 +375,28 @@ module VolumeIntegrals
 
             do k = 0, Nel(3)  ; do j = 0, Nel(2) ; do i = 0, Nel(1)
                val = val + wx(i) * wy(j) * wz(k) * e % geom % jacobian(i,j,k) * e % storage % Q(IRHOE,i,j,k)
+            end do            ; end do           ; end do
+
+         case ( DENSITY )
+!
+!           **********************************
+!           Computes the volume integral
+!              val = \int rho dV
+!           **********************************
+!
+            do k = 0, Nel(3)  ; do j = 0, Nel(2) ; do i = 0, Nel(1)
+               val = val + wx(i) * wy(j) * wz(k) * e % geom % jacobian(i,j,k) * e % storage % Q(IRHO,i,j,k)
+            end do            ; end do           ; end do
+
+         case ( XMASSFLUX )
+!
+!           **********************************
+!           Computes the volume integral
+!              val = \int rho u dV
+!           **********************************
+!
+            do k = 0, Nel(3)  ; do j = 0, Nel(2) ; do i = 0, Nel(1)
+               val = val + wx(i) * wy(j) * wz(k) * e % geom % jacobian(i,j,k) * e % storage % Q(IRHOU,i,j,k)
             end do            ; end do           ; end do
 #endif
 

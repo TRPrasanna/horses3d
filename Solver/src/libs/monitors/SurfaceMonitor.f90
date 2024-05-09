@@ -176,6 +176,17 @@ module SurfaceMonitorClass
                   end if
                end if
 
+            case ("user-defined")
+               print*, "User-defined mon called,check 1"
+               error stop "error stopped"
+               self % isDimensionless = .true.
+
+            case ("tauyx")
+               self % isDimensionless = .true.
+
+            case ("surfacearea")
+               self % isDimensionless = .true.
+
             case ("viscous-force")
                self % isDimensionless = .false.
                if ( len_trim(directionName) .eq. 0 ) then
@@ -363,6 +374,33 @@ module SurfaceMonitorClass
             end if
             F = refValues % rho * POW2(refValues % V) * POW2(Lref) * F
             self % values(bufferPosition) = dot_product(F, self % direction)
+
+         case ("user-defined")
+            if( self% IBM ) then
+               STLNum = self% marker
+               call ScalarDataReconstruction( mesh% IBM, mesh% elements, STLNum, USER_DEFINED, iter, autosave, dt )
+               self % values(bufferPosition) = mesh% IBM% stlSurfaceIntegrals(STLNum)% ComputeScalarIntegral()
+            else
+               self % values(bufferPosition) = ScalarSurfaceIntegral(mesh, self % marker, USER_DEFINED, iter)
+            end if 
+
+         case ("tauyx")
+            if( self% IBM ) then
+               STLNum = self% marker
+               call ScalarDataReconstruction( mesh% IBM, mesh% elements, STLNum, TAUYX, iter, autosave, dt )
+               self % values(bufferPosition) = mesh% IBM% stlSurfaceIntegrals(STLNum)% ComputeScalarIntegral()
+            else
+               self % values(bufferPosition) = ScalarSurfaceIntegral(mesh, self % marker, TAUYX, iter)
+            end if 
+
+         case ("surfacearea")
+            if( self% IBM ) then
+               STLNum = self% marker
+               call ScalarDataReconstruction( mesh% IBM, mesh% elements, STLNum, SURFACE, iter, autosave, dt )
+               self % values(bufferPosition) = mesh% IBM% stlSurfaceIntegrals(STLNum)% ComputeScalarIntegral()
+            else
+               self % values(bufferPosition) = ScalarSurfaceIntegral(mesh, self % marker, SURFACE, iter)
+            end if 
 
          case ("viscous-force")
             if( self% IBM ) then 

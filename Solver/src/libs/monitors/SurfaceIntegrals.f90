@@ -15,7 +15,7 @@ module SurfaceIntegrals
    implicit none
 
    private
-   public   SURFACE, TOTAL_FORCE, PRESSURE_FORCE, VISCOUS_FORCE, MASS_FLOW, FLOW_RATE, PRESSURE_DISTRIBUTION
+   public   SURFACE, TOTAL_FORCE, PRESSURE_FORCE, VISCOUS_FORCE, MASS_FLOW, FLOW_RATE, PRESSURE_DISTRIBUTION, TAUYX, USER_DEFINED
    public   ScalarSurfaceIntegral, VectorSurfaceIntegral, ScalarDataReconstruction, VectorDataReconstruction
 
    integer, parameter   :: SURFACE = 1
@@ -25,6 +25,7 @@ module SurfaceIntegrals
    integer, parameter   :: MASS_FLOW = 5
    integer, parameter   :: FLOW_RATE = 6
    integer, parameter   :: PRESSURE_DISTRIBUTION = 7
+   integer, parameter   :: TAUYX = 8
    integer, parameter   :: USER_DEFINED = 99
 !
 !  ========
@@ -132,7 +133,8 @@ module SurfaceIntegrals
 !        ---------------
 !
          integer                       :: i, j      ! Face indices
-         real(kind=RP)                 :: p
+         real(kind=RP)                 :: p, tau(NDIM,NDIM)
+         real(kind=RP)                 :: invRho, invRho2, uDivRho(NDIM)
          type(NodalStorage_t), pointer :: spAxi, spAeta
 !
 !        Initialization
@@ -205,6 +207,33 @@ module SurfaceIntegrals
                p = Pressure(Q(:,i,j))
                val = val + p * spAxi % w(i) * spAeta % w(j) * f % geom % jacobian(i,j)
             end do          ;    end do
+
+         case ( TAUYX )
+      
+!           **********************************
+!           Computes the surface integral
+!              val = \int du/dy dS
+!           **********************************
+!
+            associate( U_x => f % storage(1) % U_x, &
+               U_y => f % storage(1) % U_y, &
+               U_z => f % storage(1) % U_z   )
+!
+            do j = 0, f % Nf(2) ;    do i = 0, f % Nf(1)
+!
+!              Compute the integral
+!              --------------------
+               call getStressTensor(Q(:,i,j),U_x(:,i,j),U_y(:,i,j),U_z(:,i,j), tau)
+
+               invRho  = 1._RP / Q(IRHO,i,j)
+               invRho2 = invRho * invRho
+            
+               uDivRho = [Q(IRHOU,i,j) , Q(IRHOV,i,j) , Q(IRHOW,i,j) ] * invRho2
+            
+               val = val + (invRho * U_y(IRHOU,i,j) - uDivRho(1) * U_y(IRHO,i,j)) &
+                         * f % geom % jacobian(i,j) * spAxi % w(i) * spAeta % w(j) 
+            end do          ;    end do
+            end associate
 
 
          case ( USER_DEFINED )   ! TODO

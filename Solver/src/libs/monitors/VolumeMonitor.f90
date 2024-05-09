@@ -117,6 +117,8 @@ module VolumeMonitorClass
          case ("artificial dissipation")
          case ("internal energy")
          case ("mean velocity")
+         case ("density")
+         case ("xmassflux")
          case ("velocity")          ; self % num_of_vars = 3
          case ("momentum")          ; self % num_of_vars = 3
          case ("source")            ; self % num_of_vars = NCONS
@@ -307,6 +309,12 @@ module VolumeMonitorClass
 
          case ("mean velocity")
             self % values(1,bufferPosition) = ScalarVolumeIntegral(mesh, VELOCITY) / ScalarVolumeIntegral(mesh, VOLUME)
+
+         case ("density")
+            self % values(1,bufferPosition) = ScalarVolumeIntegral(mesh, DENSITY) / ScalarVolumeIntegral(mesh, VOLUME)
+
+         case ("xmassflux")
+            self % values(1,bufferPosition) = ScalarVolumeIntegral(mesh, XMASSFLUX) / ScalarVolumeIntegral(mesh, VOLUME)
 
          case ("velocity")
             self % values(:,bufferPosition) = VectorVolumeIntegral(mesh, VELOCITY, self % num_of_vars) / ScalarVolumeIntegral(mesh, VOLUME)
