@@ -2750,7 +2750,14 @@ slavecoord:             DO l = 1, 4
 !        ---------------
 !
          integer                       :: fid, eID
+#ifdef _HAS_MPI_
+         integer                       :: arraydim = 4
+         integer                       :: ierr, flag
+         integer(kind=MPI_OFFSET_KIND) :: posmpi
+         integer(kind=MPI_OFFSET_KIND) :: POS_TERMINATORMPI = POS_TERMINATOR
+#else
          integer(kind=AddrInt)         :: pos
+#endif
          character(len=LINE_LENGTH)    :: meshName
          real(kind=RP), parameter      :: refs(NO_OF_SAVED_REFS) = 0.0_RP
 
@@ -2764,12 +2771,26 @@ slavecoord:             DO l = 1, 4
 !        Introduce all element nodal coordinates
 !        ---------------------------------------
 #ifdef _HAS_MPI_
-         MPI_File_write_all(fh, buf, count, datatype, status, ierror)
-         pos = POS_INIT_DATA + (e % globID-1)*5_AddrInt*SIZEOF_INT + 3_AddrInt*e % offsetIO*SIZEOF_RP
-         array = e % geom % x(:,0:e%Nxyz(1),0:e%Nxyz(2),0:e%Nxyz(3))*Lref
-            write(fID) 4
-            write(fID) size(array,1), size(array,2), size(array,3), size(array,4)
-            write(fID) array
+         call mpi_file_open(MPI_COMM_WORLD, trim(meshName), MPI_MODE_RDWR , MPI_INFO_NULL, fid, ierr)
+         call mpi_file_read_at(fid, POS_TERMINATORMPI-1, flag, 1, MPI_INTEGER, MPI_STATUS_IGNORE, ierr)
+         if ( flag .ne. BEGINNING_DATA ) then
+            print*, "Wrong beginning data specifier"
+            print*, "flag = ", flag, "POS_TERMINATORMPI =", POS_TERMINATOR
+            errorMessage(STD_OUT)
+            error stop
+         end if
+         call mpi_file_write_at(fid, POS_TERMINATORMPI+1, arraydim, 1, MPI_INTEGER, MPI_STATUS_IGNORE, ierr)
+         do eID = 1, self % no_of_elements
+            associate(e => self % elements(eID))
+            posmpi = POS_INIT_DATA + (e % globID-1)*5_AddrInt*SIZEOF_INT + 3_AddrInt*e % offsetIO*SIZEOF_RP + 1_AddrInt ! added 1 here
+            call mpi_file_write_at(fid, posmpi, arraydim, 1, MPI_INTEGER, MPI_STATUS_IGNORE, ierr)
+               associate(array => e % geom % x(:,0:e%Nxyz(1),0:e%Nxyz(2),0:e%Nxyz(3)))
+                  call mpi_file_write_at(fid, posmpi+SIZEOF_INT, (/size(array,1), size(array,2), size(array,3), size(array,4)/), 4, MPI_INTEGER, MPI_STATUS_IGNORE, ierr)
+                  call mpi_file_write_at(fid, posmpi+5*SIZEOF_INT, array*Lref, size(array), MPI_DOUBLE, MPI_STATUS_IGNORE, ierr) ! Idk why so much bookkeeping for pos
+               end associate
+            end associate
+         end do
+         call mpi_file_close(fid, ierr)
 #else
          fID = putSolutionFileInWriteDataMode(trim(meshName))
          do eID = 1, self % no_of_elements

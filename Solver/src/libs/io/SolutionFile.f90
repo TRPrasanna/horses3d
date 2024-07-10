@@ -43,7 +43,7 @@ module SolutionFile
    public      :: ZONE_SOLUTION_FILE, ZONE_SOLUTION_AND_DOT_FILE
    public      :: SOLUTION_AND_SENSOR_FILE, SOLUTION_AND_GRADIENTS_AND_SENSOR_FILE
    public      :: BEGINNING_DATA
-   public      :: SOLFILE_STR_LEN, POS_INIT_DATA
+   public      :: SOLFILE_STR_LEN, POS_INIT_DATA, POS_TERMINATOR
    public      :: NO_OF_SAVED_REFS, GAMMA_REF, RGAS_REF, V_REF, RHO_REF, T_REF, MACH_REF, RE_REF
 
    public      :: CreateNewSolutionFile, writeArray, SealSolutionFile, getSolutionFileType
