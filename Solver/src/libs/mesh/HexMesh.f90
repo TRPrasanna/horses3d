@@ -2763,6 +2763,14 @@ slavecoord:             DO l = 1, 4
 !
 !        Introduce all element nodal coordinates
 !        ---------------------------------------
+#ifdef _HAS_MPI_
+         MPI_File_write_all(fh, buf, count, datatype, status, ierror)
+         pos = POS_INIT_DATA + (e % globID-1)*5_AddrInt*SIZEOF_INT + 3_AddrInt*e % offsetIO*SIZEOF_RP
+         array = e % geom % x(:,0:e%Nxyz(1),0:e%Nxyz(2),0:e%Nxyz(3))*Lref
+            write(fID) 4
+            write(fID) size(array,1), size(array,2), size(array,3), size(array,4)
+            write(fID) array
+#else
          fID = putSolutionFileInWriteDataMode(trim(meshName))
          do eID = 1, self % no_of_elements
             associate(e => self % elements(eID))
@@ -2775,7 +2783,7 @@ slavecoord:             DO l = 1, 4
 !        Close the file
 !        --------------
          call SealSolutionFile(trim(meshName))
-
+#endif
       end subroutine HexMesh_Export
 !
 !///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
