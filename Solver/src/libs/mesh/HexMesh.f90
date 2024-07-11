@@ -2779,18 +2779,18 @@ slavecoord:             DO l = 1, 4
             errorMessage(STD_OUT)
             error stop
          end if
-         call mpi_file_write_at(fid, POS_TERMINATORMPI+1, arraydim, 1, MPI_INTEGER, MPI_STATUS_IGNORE, ierr)
          do eID = 1, self % no_of_elements
             associate(e => self % elements(eID))
-            posmpi = POS_INIT_DATA + (e % globID-1)*5_AddrInt*SIZEOF_INT + 3_AddrInt*e % offsetIO*SIZEOF_RP + 1_AddrInt ! added 1 here
-            call mpi_file_write_at(fid, posmpi, arraydim, 1, MPI_INTEGER, MPI_STATUS_IGNORE, ierr)
+            posmpi = POS_INIT_DATA + (e % globID-1)*5_AddrInt*SIZEOF_INT + 3_AddrInt*e % offsetIO*SIZEOF_RP - 1_AddrInt ! subtracted 1 here
                associate(array => e % geom % x(:,0:e%Nxyz(1),0:e%Nxyz(2),0:e%Nxyz(3)))
+                  call mpi_file_write_at(fid, posmpi, arraydim, 1, MPI_INTEGER, MPI_STATUS_IGNORE, ierr)
                   call mpi_file_write_at(fid, posmpi+SIZEOF_INT, (/size(array,1), size(array,2), size(array,3), size(array,4)/), 4, MPI_INTEGER, MPI_STATUS_IGNORE, ierr)
                   call mpi_file_write_at(fid, posmpi+5*SIZEOF_INT, array*Lref, size(array), MPI_DOUBLE, MPI_STATUS_IGNORE, ierr) ! Idk why so much bookkeeping for pos
                end associate
             end associate
          end do
          call mpi_file_close(fid, ierr)
+         call SealSolutionFile(trim(meshName))
 #else
          fID = putSolutionFileInWriteDataMode(trim(meshName))
          do eID = 1, self % no_of_elements
