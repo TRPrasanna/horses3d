@@ -2808,13 +2808,13 @@ slavecoord:             DO l = 1, 4
             associate(e => self % elements(eID))
                associate(array => e % geom % x(:,0:e%Nxyz(1),0:e%Nxyz(2),0:e%Nxyz(3)))
                   pos_size(indices2(eID):indices2(eID+1)-1) = [arraydim, size(array,1), size(array,2), size(array,3), size(array,4)]
-                  xbuffer(indices(eID):indices(eID+1)-1) = [array]
+                  xbuffer(indices(eID):indices(eID+1)-1) = [array*Lref]
                end associate
             end associate
          end do
          associate(e => self % elements(self % no_of_elements))
             associate(array => e % geom % x(:,0:e%Nxyz(1),0:e%Nxyz(2),0:e%Nxyz(3)))
-               xbuffer(indices(self % no_of_elements):) = [array]
+               xbuffer(indices(self % no_of_elements):) = [array*Lref]
                pos_size(indices2(self % no_of_elements):) = [arraydim, size(array,1), size(array,2), size(array,3), size(array,4)]
             end associate
          end associate
