@@ -2750,7 +2750,21 @@ slavecoord:             DO l = 1, 4
 !        ---------------
 !
          integer                       :: fid, eID
+#ifdef _HAS_MPI_
+         integer                       :: arraydim = 4
+         integer                       :: datasize = 0
+         integer                       :: ierr, flag
+         integer, dimension(self % no_of_elements) :: blocklengths, displacementsfile, displacementsfile2, indices, indices2
+         integer, dimension(self % no_of_elements) :: blocklengths2
+         integer, dimension(self % no_of_elements*5) :: pos_size
+         integer(kind=MPI_OFFSET_KIND) :: POS_TERMINATORMPI = POS_TERMINATOR
+         integer(kind=MPI_OFFSET_KIND) :: POS_INIT_DATAMPI = POS_INIT_DATA
+         integer(kind=MPI_OFFSET_KIND) :: zeroffset = 0
+         integer                       :: MPI_CONTIGUOUSTYPEDATA, MPI_CONTIGUOUSTYPEDATA2, MPI_HINDEXEDTYPEFILE, MPI_HINDEXEDTYPEFILE2
+         real(kind=RP) , allocatable   :: xbuffer(:)
+#else
          integer(kind=AddrInt)         :: pos
+#endif
          character(len=LINE_LENGTH)    :: meshName
          real(kind=RP), parameter      :: refs(NO_OF_SAVED_REFS) = 0.0_RP
 
@@ -2763,6 +2777,64 @@ slavecoord:             DO l = 1, 4
 !
 !        Introduce all element nodal coordinates
 !        ---------------------------------------
+#ifdef _HAS_MPI_
+         call mpi_file_open(MPI_COMM_WORLD, trim(meshName), MPI_MODE_RDWR , MPI_INFO_NULL, fid, ierr)
+         call mpi_file_read_at(fid, POS_TERMINATORMPI-1, flag, 1, MPI_INTEGER, MPI_STATUS_IGNORE, ierr)
+         if ( flag .ne. BEGINNING_DATA ) then
+            print*, "Wrong beginning data specifier"
+            print*, "flag = ", flag, "POS_TERMINATORMPI =", POS_TERMINATOR
+            errorMessage(STD_OUT)
+            error stop
+         end if
+
+         do eID = 1, self % no_of_elements
+            associate(e => self % elements(eID))
+               datasize = datasize + size(e % geom % x,1) * (e % Nxyz(1)+1) * (e % Nxyz(2)+1) * (e % Nxyz(3)+1) ! size(e % geom % x) ? Not sure
+               displacementsfile(eID) = POS_INIT_DATAMPI + (e % globID-1)*5_AddrInt*SIZEOF_INT + 3_AddrInt*e % offsetIO*SIZEOF_RP + 5*SIZEOF_INT- 1_AddrInt
+               blocklengths(eID) = size(e % geom % x,1) * (e % Nxyz(1)+1) * (e % Nxyz(2)+1) * (e % Nxyz(3)+1)
+            end associate
+         end do
+         blocklengths2(:) = 5
+         indices2(1) = 1
+         indices(1) = 1
+         do eID = 1, self % no_of_elements - 1
+            associate(e => self % elements(eID))
+               indices2(eID+1) = indices2(eID) + 5
+               indices(eID+1) = indices(eID) + size(e % geom % x,1) * (e % Nxyz(1)+1) * (e % Nxyz(2)+1) * (e % Nxyz(3)+1)
+            end associate
+         end do
+         allocate( xbuffer(datasize) )
+         do eID = 1, self % no_of_elements -1 
+            associate(e => self % elements(eID))
+               associate(array => e % geom % x(:,0:e%Nxyz(1),0:e%Nxyz(2),0:e%Nxyz(3)))
+                  pos_size(indices2(eID):indices2(eID+1)-1) = [arraydim, size(array,1), size(array,2), size(array,3), size(array,4)]
+                  xbuffer(indices(eID):indices(eID+1)-1) = [array]
+               end associate
+            end associate
+         end do
+         associate(e => self % elements(self % no_of_elements))
+            associate(array => e % geom % x(:,0:e%Nxyz(1),0:e%Nxyz(2),0:e%Nxyz(3)))
+               xbuffer(indices(self % no_of_elements):) = [array]
+               pos_size(indices2(self % no_of_elements):) = [arraydim, size(array,1), size(array,2), size(array,3), size(array,4)]
+            end associate
+         end associate
+         call mpi_type_contiguous(datasize, MPI_DOUBLE, MPI_CONTIGUOUSTYPEDATA, ierr)
+         call mpi_type_contiguous(self % no_of_elements*5, MPI_INTEGER, MPI_CONTIGUOUSTYPEDATA2, ierr)
+         call mpi_type_hindexed(self % no_of_elements, blocklengths, displacementsfile, MPI_DOUBLE, MPI_HINDEXEDTYPEFILE, ierr)
+         call mpi_type_hindexed(self % no_of_elements, blocklengths2, displacementsfile-5*SIZEOF_INT, MPI_INTEGER, MPI_HINDEXEDTYPEFILE2, ierr)
+         call mpi_type_commit(MPI_CONTIGUOUSTYPEDATA, ierr)
+         call mpi_type_commit(MPI_CONTIGUOUSTYPEDATA2, ierr)
+         call mpi_type_commit(MPI_HINDEXEDTYPEFILE, ierr)
+         call mpi_type_commit(MPI_HINDEXEDTYPEFILE2, ierr)
+         call MPI_File_set_view(fid, zeroffset, MPI_CONTIGUOUSTYPEDATA, MPI_HINDEXEDTYPEFILE, "native", MPI_INFO_NULL, ierr)
+         call mpi_file_write_all(fid, xbuffer, 1, MPI_CONTIGUOUSTYPEDATA, MPI_STATUS_IGNORE, ierr)
+         call MPI_File_set_view(fid, zeroffset, MPI_CONTIGUOUSTYPEDATA2, MPI_HINDEXEDTYPEFILE2, "native", MPI_INFO_NULL, ierr)
+         call mpi_file_write_all(fid, pos_size, 1, MPI_CONTIGUOUSTYPEDATA2, MPI_STATUS_IGNORE, ierr)
+         deallocate(xbuffer)
+
+         call mpi_file_close(fid, ierr)
+         call SealSolutionFile(trim(meshName))
+#else
          fID = putSolutionFileInWriteDataMode(trim(meshName))
          do eID = 1, self % no_of_elements
             associate(e => self % elements(eID))
@@ -2775,7 +2847,7 @@ slavecoord:             DO l = 1, 4
 !        Close the file
 !        --------------
          call SealSolutionFile(trim(meshName))
-
+#endif
       end subroutine HexMesh_Export
 !
 !///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
