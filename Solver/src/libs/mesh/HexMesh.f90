@@ -3033,6 +3033,19 @@ slavecoord:             DO l = 1, 4
 #if (!defined(NAVIERSTOKES) || !defined(INCNS))
          logical                          :: computeGradients = .true.
 #endif
+#ifdef _HAS_MPI_
+         integer                          :: datasize = 0
+         real(kind=RP) , allocatable      :: Qbuffer(:)
+         integer                          :: ierr, flag
+         integer, dimension(self % no_of_elements) :: blocklengths, displacementsfile, indices
+         integer, dimension(self % no_of_elements) :: blocklengths2, displacementsfile2, indices2
+         integer, dimension(self % no_of_elements*5) :: pos_size
+         integer(kind=MPI_OFFSET_KIND)    :: POS_TERMINATORMPI = POS_TERMINATOR
+         integer(kind=MPI_OFFSET_KIND)    :: POS_INIT_DATAMPI = POS_INIT_DATA
+         integer(kind=MPI_OFFSET_KIND)    :: zeroffset = 0
+         integer                          :: MPI_CONTIGUOUSTYPEDATA, MPI_HINDEXEDTYPEFILE
+         integer                          :: MPI_CONTIGUOUSTYPEDATA2, MPI_HINDEXEDTYPEFILE2
+#endif
 !
 !        Gather reference quantities
 !        ---------------------------
@@ -3088,6 +3101,63 @@ slavecoord:             DO l = 1, 4
          end if
 
          if (saveLES) padding = padding + 2
+
+#ifdef _HAS_MPI_
+         call mpi_file_open(MPI_COMM_WORLD, trim(name), MPI_MODE_RDWR , MPI_INFO_NULL, fid, ierr)
+         call mpi_file_read_at(fid, POS_TERMINATORMPI-1, flag, 1, MPI_INTEGER, MPI_STATUS_IGNORE, ierr)
+         if ( flag .ne. BEGINNING_DATA ) then
+            print*, "Wrong beginning data specifier"
+            errorMessage(STD_OUT)
+            error stop
+         end if
+
+         indices(1) = 1
+         indices2(1) = 1
+         do eID = 1, self % no_of_elements - 1
+            associate( e => self % elements(eID) )
+               blocklengths(eID) = size(e % storage % Q)
+               indices(eID+1) = indices(eID) + blocklengths(eID)
+               indices2(eID+1) = indices2(eID) + 5
+               datasize = datasize + blocklengths(eID)
+               displacementsfile(eID) = POS_INIT_DATAMPI + (e % globID-1)*5_AddrInt*SIZEOF_INT + 1_AddrInt*padding*e % offsetIO * SIZEOF_RP + 5*SIZEOF_INT- 1_AddrInt
+            end associate
+         end do
+         blocklengths2(:) = 5
+         datasize = datasize + size(self % elements(self % no_of_elements) % storage % Q) ! last element
+         allocate(Qbuffer(datasize))
+         do eID = 1, self % no_of_elements - 1
+            associate( e => self % elements(eID) )
+               associate(array => e % storage % Q)
+                  pos_size(indices2(eID):indices2(eID+1)-1) = [4, size(array,1), size(array,2), size(array,3), size(array,4)]
+                  Qbuffer(indices(eID):indices(eID+1)-1) = [array]
+               end associate
+            end associate
+         end do
+         associate( e => self % elements(self % no_of_elements) ) ! last element
+            associate(array => e % storage % Q)
+               pos_size(indices2(self % no_of_elements):) = [4, size(array,1), size(array,2), size(array,3), size(array,4)]
+               Qbuffer(indices(self % no_of_elements):) = [array]
+               displacementsfile(self % no_of_elements) = POS_INIT_DATAMPI + (e % globID-1)*5_AddrInt*SIZEOF_INT + 1_AddrInt*padding*e % offsetIO * SIZEOF_RP + 5*SIZEOF_INT- 1_AddrInt
+               blocklengths(self % no_of_elements) = size(array)
+            end associate
+         end associate
+         call mpi_type_contiguous(datasize, MPI_DOUBLE, MPI_CONTIGUOUSTYPEDATA, ierr)
+         call mpi_type_contiguous(self % no_of_elements*5, MPI_INTEGER, MPI_CONTIGUOUSTYPEDATA2, ierr)
+         call mpi_type_hindexed(self % no_of_elements, blocklengths, displacementsfile, MPI_DOUBLE, MPI_HINDEXEDTYPEFILE, ierr)
+         call mpi_type_hindexed(self % no_of_elements, blocklengths2, displacementsfile-5*SIZEOF_INT, MPI_INTEGER, MPI_HINDEXEDTYPEFILE2, ierr)
+         call mpi_type_commit(MPI_CONTIGUOUSTYPEDATA, ierr)
+         call mpi_type_commit(MPI_CONTIGUOUSTYPEDATA2, ierr)
+         call mpi_type_commit(MPI_HINDEXEDTYPEFILE, ierr)
+         call mpi_type_commit(MPI_HINDEXEDTYPEFILE2, ierr)
+         call MPI_File_set_view(fid, zeroffset, MPI_CONTIGUOUSTYPEDATA, MPI_HINDEXEDTYPEFILE, "native", MPI_INFO_NULL, ierr)
+         call mpi_file_write_all(fid, Qbuffer, 1, MPI_CONTIGUOUSTYPEDATA, MPI_STATUS_IGNORE, ierr)
+         call MPI_File_set_view(fid, zeroffset, MPI_CONTIGUOUSTYPEDATA2, MPI_HINDEXEDTYPEFILE2, "native", MPI_INFO_NULL, ierr)
+         call mpi_file_write_all(fid, pos_size, 1, MPI_CONTIGUOUSTYPEDATA2, MPI_STATUS_IGNORE, ierr)
+         deallocate(Qbuffer)
+
+         call mpi_file_close(fid, ierr)
+         call SealSolutionFile(trim(name))
+#else
 !
 !        Write arrays
 !        ------------
@@ -3155,7 +3225,7 @@ slavecoord:             DO l = 1, 4
                write(fid) Q
                deallocate(Q)
 #endif
-          end if 
+          end if
 
             end associate
          end do
@@ -3164,7 +3234,7 @@ slavecoord:             DO l = 1, 4
 !        Close the file
 !        --------------
          call SealSolutionFile(trim(name))
-
+#endif
       end subroutine HexMesh_SaveSolution
 
 #if defined(NAVIERSTOKES)
