@@ -2751,8 +2751,8 @@ slavecoord:             DO l = 1, 4
 !
          integer                       :: fid, eID
 #ifdef _HAS_MPI_
-         integer                       :: arraydim = 4
-         integer                       :: datasize = 0
+         integer                       :: arraydim
+         integer                       :: datasize
          integer                       :: ierr, flag
          integer, dimension(self % no_of_elements) :: blocklengths, displacementsfile, displacementsfile2, indices, indices2
          integer, dimension(self % no_of_elements) :: blocklengths2
@@ -2778,6 +2778,8 @@ slavecoord:             DO l = 1, 4
 !        Introduce all element nodal coordinates
 !        ---------------------------------------
 #ifdef _HAS_MPI_
+         arraydim = 4
+         datasize = 0
          call mpi_file_open(MPI_COMM_WORLD, trim(meshName), MPI_MODE_RDWR , MPI_INFO_NULL, fid, ierr)
          call mpi_file_read_at(fid, POS_TERMINATORMPI-1, flag, 1, MPI_INTEGER, MPI_STATUS_IGNORE, ierr)
          if ( flag .ne. BEGINNING_DATA ) then
@@ -3034,7 +3036,7 @@ slavecoord:             DO l = 1, 4
          logical                          :: computeGradients = .true.
 #endif
 #ifdef _HAS_MPI_
-         integer                          :: datasize = 0
+         integer                          :: datasize
          real(kind=RP) , allocatable      :: Qbuffer(:)
          integer                          :: ierr, flag
          integer, dimension(self % no_of_elements) :: blocklengths, displacementsfile, indices
@@ -3103,6 +3105,7 @@ slavecoord:             DO l = 1, 4
          if (saveLES) padding = padding + 2
 
 #ifdef _HAS_MPI_
+         datasize = 0 ! if initialized at declaration, it will be declared with SAVE attribute automatically
          call mpi_file_open(MPI_COMM_WORLD, trim(name), MPI_MODE_RDWR , MPI_INFO_NULL, fid, ierr)
          call mpi_file_read_at(fid, POS_TERMINATORMPI-1, flag, 1, MPI_INTEGER, MPI_STATUS_IGNORE, ierr)
          if ( flag .ne. BEGINNING_DATA ) then
@@ -3123,7 +3126,9 @@ slavecoord:             DO l = 1, 4
             end associate
          end do
          blocklengths2(:) = 5
-         datasize = datasize + size(self % elements(self % no_of_elements) % storage % Q) ! last element
+         associate( e => self % elements(self % no_of_elements) )
+         datasize = datasize + size(e % storage % Q) ! last element
+         end associate
          allocate(Qbuffer(datasize))
          do eID = 1, self % no_of_elements - 1
             associate( e => self % elements(eID) )
