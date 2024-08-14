@@ -18,6 +18,7 @@ WITH_PETSC?=NO
 WITH_METIS?=NO
 WITH_HDF5?=NO
 WITH_MKL?=NO
+WITH_MPIIO?=NO
 
 MAKE=make
 AR=ar
@@ -213,6 +214,13 @@ ifeq ($(WITH_HDF5),YES)
     $(error option WITH_HDF5 = YES requires defining path to HDF5 with HDF5_DIR)
   endif 
 endif 
+
+##########################
+## 	Link MPIIO 	##
+##########################
+ifeq '$(WITH_MPIIO)''YES'
+  MACROS+= -D_HAS_MPIIO_
+endif
 
 ##########################################
 ##  	Select HORSES libraries 	##

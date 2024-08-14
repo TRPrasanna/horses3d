@@ -2750,7 +2750,7 @@ slavecoord:             DO l = 1, 4
 !        ---------------
 !
          integer                       :: fid, eID
-#ifdef _HAS_MPI_
+#if defined(_HAS_MPI_) && (_HAS_MPIIO_)
          integer                       :: arraydim
          integer                       :: datasize
          integer                       :: ierr, flag
@@ -2777,7 +2777,7 @@ slavecoord:             DO l = 1, 4
 !
 !        Introduce all element nodal coordinates
 !        ---------------------------------------
-#ifdef _HAS_MPI_
+#if defined(_HAS_MPI_) && (_HAS_MPIIO_)
          arraydim = 4
          datasize = 0
          call mpi_file_open(MPI_COMM_WORLD, trim(meshName), MPI_MODE_RDWR , MPI_INFO_NULL, fid, ierr)
@@ -3035,7 +3035,7 @@ slavecoord:             DO l = 1, 4
 #if (!defined(NAVIERSTOKES) || !defined(INCNS))
          logical                          :: computeGradients = .true.
 #endif
-#ifdef _HAS_MPI_
+#if defined(_HAS_MPI_) && (_HAS_MPIIO_)
          integer                          :: datasize
          real(kind=RP) , allocatable      :: Qbuffer(:)
          integer                          :: ierr, flag
@@ -3104,7 +3104,7 @@ slavecoord:             DO l = 1, 4
 
          if (saveLES) padding = padding + 2
 
-#ifdef _HAS_MPI_
+#if defined(_HAS_MPI_) && (_HAS_MPIIO_)
          datasize = 0 ! if initialized at declaration, it will be declared with SAVE attribute automatically
          call mpi_file_open(MPI_COMM_WORLD, trim(name), MPI_MODE_RDWR , MPI_INFO_NULL, fid, ierr)
          call mpi_file_read_at(fid, POS_TERMINATORMPI-1, flag, 1, MPI_INTEGER, MPI_STATUS_IGNORE, ierr)
@@ -3126,9 +3126,7 @@ slavecoord:             DO l = 1, 4
             end associate
          end do
          blocklengths2(:) = 5
-         associate( e => self % elements(self % no_of_elements) )
-         datasize = datasize + size(e % storage % Q) ! last element
-         end associate
+         datasize = datasize + size(self % elements(self % no_of_elements) % storage % Q) ! last element
          allocate(Qbuffer(datasize))
          do eID = 1, self % no_of_elements - 1
             associate( e => self % elements(eID) )
@@ -3243,6 +3241,7 @@ slavecoord:             DO l = 1, 4
       end subroutine HexMesh_SaveSolution
 
 #if defined(NAVIERSTOKES)
+#if defined(_HAS_MPI_) && (_HAS_MPIIO_)
       subroutine HexMesh_SaveStatistics(self, iter, time, name, saveGradients)
          use SolutionFile
          implicit none
@@ -3258,9 +3257,20 @@ slavecoord:             DO l = 1, 4
 !
          integer                          :: fid, eID
          integer                          :: no_stat_s
-         integer(kind=AddrInt)            :: pos
          real(kind=RP)                    :: refs(NO_OF_SAVED_REFS) 
          real(kind=RP), allocatable       :: Q(:,:,:,:)
+
+         integer                          :: datasize, datasizeQ
+         real(kind=RP) , allocatable      :: statbuffer(:), Qbuffer(:)
+         integer                          :: ierr, flag
+         integer, dimension(self % no_of_elements) :: blocklengths, displacementsfile, indices, indices2
+         integer, dimension(self % no_of_elements) :: blocklengthsQ, displacementsQfile, indicesQ
+         integer, dimension(self % no_of_elements*5) :: pos_size
+         integer(kind=MPI_OFFSET_KIND)    :: POS_TERMINATORMPI = POS_TERMINATOR
+         integer(kind=MPI_OFFSET_KIND)    :: POS_INIT_DATAMPI = POS_INIT_DATA
+         integer(kind=MPI_OFFSET_KIND)    :: zeroffset = 0
+         integer                          :: MPI_CONTIGUOUSTYPEDATA, MPI_HINDEXEDTYPEFILE
+
 !
 !        Gather reference quantities
 !        ---------------------------
@@ -3275,43 +3285,184 @@ slavecoord:             DO l = 1, 4
 !        Create new file
 !        ---------------
          call CreateNewSolutionFile(trim(name),STATS_FILE, self % nodeType, self % no_of_allElements, iter, time, refs)
+
+         call mpi_file_open(MPI_COMM_WORLD, trim(name), MPI_MODE_RDWR , MPI_INFO_NULL, fid, ierr)
+         call mpi_file_read_at(fid, POS_TERMINATORMPI-1, flag, 1, MPI_INTEGER, MPI_STATUS_IGNORE, ierr)
+         if ( flag .ne. BEGINNING_DATA ) then
+            print*, "Wrong beginning data specifier"
+            errorMessage(STD_OUT)
+            error stop
+         end if
+
+         no_stat_s = 9
+         datasize = 0 ! stats
+         datasizeQ = 0 ! Q
+         indices(1) = 1
+         indices2(1) = 1
+         indicesQ(1) = 1
+         do eID = 1, self % no_of_elements - 1
+            associate( e => self % elements(eID) )
+               blocklengths(eID) = size(e % storage % stats % data(1:no_stat_s,:,:,:))
+               blocklengthsQ(eID) = size(e % storage % stats % data(no_stat_s+1:no_stat_s+NCONS,:,:,:))
+               indices(eID+1) = indices(eID) + blocklengths(eID)
+               indices2(eID+1) = indices2(eID) + 5
+               indicesQ(eID+1) = indicesQ(eID) + blocklengthsQ(eID)
+               datasize = datasize + blocklengths(eID)
+               datasizeQ = datasizeQ + blocklengthsQ(eID)
+               displacementsfile(eID) = POS_INIT_DATAMPI + (e % globID-1)*5_AddrInt*SIZEOF_INT &
+                                      + 1_AddrInt*no_of_stats_variables*e % offsetIO*SIZEOF_RP &
+                                      + (5*SIZEOF_INT - 1_AddrInt)
+               displacementsQfile(eID) = POS_INIT_DATAMPI + (e % globID-1)*5_AddrInt*SIZEOF_INT &
+                                       + 1_AddrInt*no_of_stats_variables*e % offsetIO*SIZEOF_RP &
+                                       + (5*SIZEOF_INT + blocklengths(eID)*SIZEOF_RP - 1_AddrInt)
+            end associate
+         end do
+         datasize = datasize + size(self % elements(self % no_of_elements) % storage % stats % data(1:no_stat_s,:,:,:)) ! last element
+         datasizeQ = datasizeQ + size(self % elements(self % no_of_elements) % storage % stats % data(no_stat_s+1:no_stat_s+NCONS,:,:,:)) ! last element
+         allocate(statbuffer(datasize))
+         do eID = 1, self % no_of_elements - 1
+            associate( e => self % elements(eID) )
+               associate(array => e % storage % stats % data(1:no_stat_s,:,:,:))
+                  pos_size(indices2(eID):indices2(eID+1)-1) = [4, size(array,1), size(array,2), size(array,3), size(array,4)]
+                  statbuffer(indices(eID):indices(eID+1)-1) = [array]
+               end associate
+            end associate
+         end do
+         associate( e => self % elements(self % no_of_elements) ) ! last element
+            associate(array => e % storage % stats % data(1:no_stat_s,:,:,:))
+            associate(array2 => e % storage % stats % data(no_stat_s+1:no_stat_s+NCONS,:,:,:))
+               pos_size(indices2(self % no_of_elements):) = [4, size(array,1), size(array,2), size(array,3), size(array,4)]
+               statbuffer(indices(self % no_of_elements):) = [array]
+               blocklengths(self % no_of_elements) = size(array)
+               blocklengthsQ(self % no_of_elements) = size(array2)
+               displacementsfile(self % no_of_elements) = POS_INIT_DATAMPI + (e % globID-1)*5_AddrInt*SIZEOF_INT &
+                                                        + 1_AddrInt*no_of_stats_variables*e % offsetIO*SIZEOF_RP &
+                                                        + (5*SIZEOF_INT - 1_AddrInt)
+               displacementsQfile(self % no_of_elements) = POS_INIT_DATAMPI + (e % globID-1)*5_AddrInt*SIZEOF_INT &
+                                                         + 1_AddrInt*no_of_stats_variables*e % offsetIO*SIZEOF_RP &
+                                                         + (5*SIZEOF_INT + blocklengths(self % no_of_elements)*SIZEOF_RP &
+                                                         - 1_AddrInt)
+            end associate
+            end associate
+         end associate
+
+         call mpi_type_contiguous(datasize, MPI_DOUBLE, MPI_CONTIGUOUSTYPEDATA, ierr)
+         call mpi_type_hindexed(self % no_of_elements, blocklengths, displacementsfile, MPI_DOUBLE, MPI_HINDEXEDTYPEFILE, ierr)
+         call mpi_type_commit(MPI_CONTIGUOUSTYPEDATA, ierr)
+         call mpi_type_commit(MPI_HINDEXEDTYPEFILE, ierr)
+         call MPI_File_set_view(fid, zeroffset, MPI_CONTIGUOUSTYPEDATA, MPI_HINDEXEDTYPEFILE, "native", MPI_INFO_NULL, ierr)
+         call mpi_file_write_all(fid, statbuffer, 1, MPI_CONTIGUOUSTYPEDATA, MPI_STATUS_IGNORE, ierr)
+         call mpi_type_free(MPI_CONTIGUOUSTYPEDATA, ierr)
+         call mpi_type_free(MPI_HINDEXEDTYPEFILE, ierr)
+         deallocate(statbuffer)
+
+         blocklengths(:) = 5
+         call mpi_type_contiguous(self % no_of_elements*5, MPI_INTEGER, MPI_CONTIGUOUSTYPEDATA, ierr)
+         call mpi_type_hindexed(self % no_of_elements, blocklengths, displacementsfile-(5*SIZEOF_INT), MPI_INTEGER, MPI_HINDEXEDTYPEFILE, ierr)
+         call mpi_type_commit(MPI_CONTIGUOUSTYPEDATA, ierr)
+         call mpi_type_commit(MPI_HINDEXEDTYPEFILE, ierr)
+         call MPI_File_set_view(fid, zeroffset, MPI_CONTIGUOUSTYPEDATA, MPI_HINDEXEDTYPEFILE, "native", MPI_INFO_NULL, ierr)
+         call mpi_file_write_all(fid, pos_size, 1, MPI_CONTIGUOUSTYPEDATA, MPI_STATUS_IGNORE, ierr)
+         call mpi_type_free(MPI_CONTIGUOUSTYPEDATA, ierr)
+         call mpi_type_free(MPI_HINDEXEDTYPEFILE, ierr)
+
+         allocate(Qbuffer(datasizeQ))
+         do eID = 1, self % no_of_elements - 1
+            associate( e => self % elements(eID) )
+               associate(array => e % storage % stats % data(no_stat_s+1:no_stat_s+NCONS,:,:,:))
+                  Qbuffer(indicesQ(eID):indicesQ(eID+1)-1) = [array]
+               end associate
+            end associate
+         end do
+         associate( e => self % elements(self % no_of_elements) ) ! last element
+            associate(array => e % storage % stats % data(no_stat_s+1:no_stat_s+NCONS,:,:,:))
+               Qbuffer(indicesQ(self % no_of_elements):) = [array]
+            end associate
+         end associate
+!         Qbuffer(:)=0.0_RP
+         call mpi_type_contiguous(datasizeQ, MPI_DOUBLE, MPI_CONTIGUOUSTYPEDATA, ierr)
+         call mpi_type_hindexed(self % no_of_elements, blocklengthsQ, displacementsQfile, MPI_DOUBLE, MPI_HINDEXEDTYPEFILE, ierr)
+         call mpi_type_commit(MPI_CONTIGUOUSTYPEDATA, ierr)
+         call mpi_type_commit(MPI_HINDEXEDTYPEFILE, ierr)
+         call MPI_File_set_view(fid, zeroffset, MPI_CONTIGUOUSTYPEDATA, MPI_HINDEXEDTYPEFILE, "native", MPI_INFO_NULL, ierr)
+         call mpi_file_write_all(fid, Qbuffer, 1, MPI_CONTIGUOUSTYPEDATA, MPI_STATUS_IGNORE, ierr)
+         call mpi_type_free(MPI_CONTIGUOUSTYPEDATA, ierr)
+         call mpi_type_free(MPI_HINDEXEDTYPEFILE, ierr)
+         deallocate(Qbuffer)
+
+         call mpi_file_close(fid, ierr)
+         call SealSolutionFile(trim(name))
+      end subroutine HexMesh_SaveStatistics
+#else
+   subroutine HexMesh_SaveStatistics(self, iter, time, name, saveGradients)
+      use SolutionFile
+      implicit none
+      class(HexMesh),      intent(in)        :: self
+      integer,             intent(in)        :: iter
+      real(kind=RP),       intent(in)        :: time
+      character(len=*),    intent(in)        :: name
+      logical,             intent(in)        :: saveGradients
+!
+!        ---------------
+!        Local variables
+!        ---------------
+!
+      integer                          :: fid, eID
+      integer                          :: no_stat_s
+      integer(kind=AddrInt)            :: pos
+      real(kind=RP)                    :: refs(NO_OF_SAVED_REFS) 
+      real(kind=RP), allocatable       :: Q(:,:,:,:)
+!
+!        Gather reference quantities
+!        ---------------------------
+      refs(GAMMA_REF) = thermodynamics % gamma
+      refs(RGAS_REF)  = thermodynamics % R
+      refs(RHO_REF)   = refValues      % rho
+      refs(V_REF)     = refValues      % V
+      refs(T_REF)     = refValues      % T
+      refs(MACH_REF)  = dimensionless  % Mach
+      refs(RE_REF)    = dimensionless  % Re
+
+!        Create new file
+!        ---------------
+      call CreateNewSolutionFile(trim(name),STATS_FILE, self % nodeType, self % no_of_allElements, iter, time, refs)
 !
 !        Write arrays
 !        ------------
-         fID = putSolutionFileInWriteDataMode(trim(name))
-         do eID = 1, self % no_of_elements
-            associate( e => self % elements(eID) )
-            pos = POS_INIT_DATA + (e % globID-1)*5_AddrInt*SIZEOF_INT + 1_AddrInt*no_of_stats_variables*e % offsetIO*SIZEOF_RP
-            no_stat_s = 9
-            call writeArray(fid, e % storage % stats % data(1:no_stat_s,:,:,:), position=pos)
-            allocate(Q(NCONS, 0:e % Nxyz(1), 0:e % Nxyz(2), 0:e % Nxyz(3)))
-            ! write(fid) e%storage%stats%data(7:,:,:,:)
-            Q(1:NCONS,:,:,:) = e % storage % stats % data(no_stat_s+1:no_stat_s+NCONS,:,:,:)
+      fID = putSolutionFileInWriteDataMode(trim(name))
+      do eID = 1, self % no_of_elements
+         associate( e => self % elements(eID) )
+         pos = POS_INIT_DATA + (e % globID-1)*5_AddrInt*SIZEOF_INT + 1_AddrInt*no_of_stats_variables*e % offsetIO*SIZEOF_RP
+         no_stat_s = 9
+         call writeArray(fid, e % storage % stats % data(1:no_stat_s,:,:,:), position=pos)
+         allocate(Q(NCONS, 0:e % Nxyz(1), 0:e % Nxyz(2), 0:e % Nxyz(3)))
+         ! write(fid) e%storage%stats%data(7:,:,:,:)
+         Q(1:NCONS,:,:,:) = e % storage % stats % data(no_stat_s+1:no_stat_s+NCONS,:,:,:)
+         write(fid) Q
+         deallocate(Q)
+         if ( saveGradients .and. computeGradients ) then
+            allocate(Q(NGRAD,0:e % Nxyz(1), 0:e % Nxyz(2), 0:e % Nxyz(3)))
+            ! UX
+            Q(1:NGRAD,:,:,:) = e % storage % stats % data(no_stat_s+NCONS+1:no_stat_s+NCONS+NGRAD,:,:,:)
+            write(fid) Q
+            ! UY
+            Q(1:NGRAD,:,:,:) = e % storage % stats % data(no_stat_s+NCONS+1+NGRAD:no_stat_s+NCONS+2*NGRAD,:,:,:)
+            write(fid) Q
+            ! UZ
+            Q(1:NGRAD,:,:,:) = e % storage % stats % data(no_stat_s+NCONS+1+2*NGRAD:,:,:,:)
             write(fid) Q
             deallocate(Q)
-            if ( saveGradients .and. computeGradients ) then
-               allocate(Q(NGRAD,0:e % Nxyz(1), 0:e % Nxyz(2), 0:e % Nxyz(3)))
-               ! UX
-               Q(1:NGRAD,:,:,:) = e % storage % stats % data(no_stat_s+NCONS+1:no_stat_s+NCONS+NGRAD,:,:,:)
-               write(fid) Q
-               ! UY
-               Q(1:NGRAD,:,:,:) = e % storage % stats % data(no_stat_s+NCONS+1+NGRAD:no_stat_s+NCONS+2*NGRAD,:,:,:)
-               write(fid) Q
-               ! UZ
-               Q(1:NGRAD,:,:,:) = e % storage % stats % data(no_stat_s+NCONS+1+2*NGRAD:,:,:,:)
-               write(fid) Q
-               deallocate(Q)
-            end if
-            end associate
-         end do
-         close(fid)
+         end if
+         end associate
+      end do
+      close(fid)
 !
 !        Close the file
 !        --------------
-         call SealSolutionFile(trim(name))
+      call SealSolutionFile(trim(name))
 
-      end subroutine HexMesh_SaveStatistics
-
+   end subroutine HexMesh_SaveStatistics
+#endif
 #endif
 
 #if defined(INCNS) 
