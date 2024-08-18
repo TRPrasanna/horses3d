@@ -3426,74 +3426,76 @@ slavecoord:             DO l = 1, 4
          call mpi_type_free(MPI_HINDEXEDTYPEFILE, ierr)
          deallocate(Qbuffer)
 
-         allocate(UXbuffer(datasizeUX))
-         do eID = 1, self % no_of_elements - 1
-            associate( e => self % elements(eID) )
+         if ( saveGradients .and. computeGradients ) then
+            allocate(UXbuffer(datasizeUX))
+            do eID = 1, self % no_of_elements - 1
+               associate( e => self % elements(eID) )
+                  associate(array => e % storage % stats % data(no_stat_s+NCONS+1:no_stat_s+NCONS+NGRAD,:,:,:))
+                     UXbuffer(indicesUX(eID):indicesUX(eID+1)-1) = [array]
+                  end associate
+               end associate
+            end do
+            associate( e => self % elements(self % no_of_elements) ) ! last element
                associate(array => e % storage % stats % data(no_stat_s+NCONS+1:no_stat_s+NCONS+NGRAD,:,:,:))
-                  UXbuffer(indicesUX(eID):indicesUX(eID+1)-1) = [array]
+                  UXbuffer(indicesUX(self % no_of_elements):) = [array]
                end associate
             end associate
-         end do
-         associate( e => self % elements(self % no_of_elements) ) ! last element
-            associate(array => e % storage % stats % data(no_stat_s+NCONS+1:no_stat_s+NCONS+NGRAD,:,:,:))
-               UXbuffer(indicesUX(self % no_of_elements):) = [array]
-            end associate
-         end associate
-         call mpi_type_contiguous(datasizeUX, MPI_DOUBLE, MPI_CONTIGUOUSTYPEDATA, ierr)
-         call mpi_type_hindexed(self % no_of_elements, blocklengthsUX, displacementsUXfile, MPI_DOUBLE, MPI_HINDEXEDTYPEFILE, ierr)
-         call mpi_type_commit(MPI_CONTIGUOUSTYPEDATA, ierr)
-         call mpi_type_commit(MPI_HINDEXEDTYPEFILE, ierr)
-         call MPI_File_set_view(fid, zeroffset, MPI_CONTIGUOUSTYPEDATA, MPI_HINDEXEDTYPEFILE, "native", MPI_INFO_NULL, ierr)
-         call mpi_file_write_all(fid, UXbuffer, 1, MPI_CONTIGUOUSTYPEDATA, MPI_STATUS_IGNORE, ierr)
-         call mpi_type_free(MPI_CONTIGUOUSTYPEDATA, ierr)
-         call mpi_type_free(MPI_HINDEXEDTYPEFILE, ierr)
-         deallocate(UXbuffer)
+            call mpi_type_contiguous(datasizeUX, MPI_DOUBLE, MPI_CONTIGUOUSTYPEDATA, ierr)
+            call mpi_type_hindexed(self % no_of_elements, blocklengthsUX, displacementsUXfile, MPI_DOUBLE, MPI_HINDEXEDTYPEFILE, ierr)
+            call mpi_type_commit(MPI_CONTIGUOUSTYPEDATA, ierr)
+            call mpi_type_commit(MPI_HINDEXEDTYPEFILE, ierr)
+            call MPI_File_set_view(fid, zeroffset, MPI_CONTIGUOUSTYPEDATA, MPI_HINDEXEDTYPEFILE, "native", MPI_INFO_NULL, ierr)
+            call mpi_file_write_all(fid, UXbuffer, 1, MPI_CONTIGUOUSTYPEDATA, MPI_STATUS_IGNORE, ierr)
+            call mpi_type_free(MPI_CONTIGUOUSTYPEDATA, ierr)
+            call mpi_type_free(MPI_HINDEXEDTYPEFILE, ierr)
+            deallocate(UXbuffer)
 
-         allocate(UYbuffer(datasizeUY))
-         do eID = 1, self % no_of_elements - 1
-            associate( e => self % elements(eID) )
+            allocate(UYbuffer(datasizeUY))
+            do eID = 1, self % no_of_elements - 1
+               associate( e => self % elements(eID) )
+                  associate(array => e % storage % stats % data(no_stat_s+NCONS+1+NGRAD:no_stat_s+NCONS+2*NGRAD,:,:,:))
+                     UYbuffer(indicesUY(eID):indicesUY(eID+1)-1) = [array]
+                  end associate
+               end associate
+            end do
+            associate( e => self % elements(self % no_of_elements) ) ! last element
                associate(array => e % storage % stats % data(no_stat_s+NCONS+1+NGRAD:no_stat_s+NCONS+2*NGRAD,:,:,:))
-                  UYbuffer(indicesUY(eID):indicesUY(eID+1)-1) = [array]
+                  UYbuffer(indicesUY(self % no_of_elements):) = [array]
                end associate
             end associate
-         end do
-         associate( e => self % elements(self % no_of_elements) ) ! last element
-            associate(array => e % storage % stats % data(no_stat_s+NCONS+1+NGRAD:no_stat_s+NCONS+2*NGRAD,:,:,:))
-               UYbuffer(indicesUY(self % no_of_elements):) = [array]
-            end associate
-         end associate
-         call mpi_type_contiguous(datasizeUY, MPI_DOUBLE, MPI_CONTIGUOUSTYPEDATA, ierr)
-         call mpi_type_hindexed(self % no_of_elements, blocklengthsUY, displacementsUYfile, MPI_DOUBLE, MPI_HINDEXEDTYPEFILE, ierr)
-         call mpi_type_commit(MPI_CONTIGUOUSTYPEDATA, ierr)
-         call mpi_type_commit(MPI_HINDEXEDTYPEFILE, ierr)
-         call MPI_File_set_view(fid, zeroffset, MPI_CONTIGUOUSTYPEDATA, MPI_HINDEXEDTYPEFILE, "native", MPI_INFO_NULL, ierr)
-         call mpi_file_write_all(fid, UYbuffer, 1, MPI_CONTIGUOUSTYPEDATA, MPI_STATUS_IGNORE, ierr)
-         call mpi_type_free(MPI_CONTIGUOUSTYPEDATA, ierr)
-         call mpi_type_free(MPI_HINDEXEDTYPEFILE, ierr)
-         deallocate(UYbuffer)
+            call mpi_type_contiguous(datasizeUY, MPI_DOUBLE, MPI_CONTIGUOUSTYPEDATA, ierr)
+            call mpi_type_hindexed(self % no_of_elements, blocklengthsUY, displacementsUYfile, MPI_DOUBLE, MPI_HINDEXEDTYPEFILE, ierr)
+            call mpi_type_commit(MPI_CONTIGUOUSTYPEDATA, ierr)
+            call mpi_type_commit(MPI_HINDEXEDTYPEFILE, ierr)
+            call MPI_File_set_view(fid, zeroffset, MPI_CONTIGUOUSTYPEDATA, MPI_HINDEXEDTYPEFILE, "native", MPI_INFO_NULL, ierr)
+            call mpi_file_write_all(fid, UYbuffer, 1, MPI_CONTIGUOUSTYPEDATA, MPI_STATUS_IGNORE, ierr)
+            call mpi_type_free(MPI_CONTIGUOUSTYPEDATA, ierr)
+            call mpi_type_free(MPI_HINDEXEDTYPEFILE, ierr)
+            deallocate(UYbuffer)
 
-         allocate(UZbuffer(datasizeUZ))
-         do eID = 1, self % no_of_elements - 1
-            associate( e => self % elements(eID) )
+            allocate(UZbuffer(datasizeUZ))
+            do eID = 1, self % no_of_elements - 1
+               associate( e => self % elements(eID) )
+                  associate(array => e % storage % stats % data(no_stat_s+NCONS+1+2*NGRAD:,:,:,:))
+                     UZbuffer(indicesUZ(eID):indicesUZ(eID+1)-1) = [array]
+                  end associate
+               end associate
+            end do
+            associate( e => self % elements(self % no_of_elements) ) ! last element
                associate(array => e % storage % stats % data(no_stat_s+NCONS+1+2*NGRAD:,:,:,:))
-                  UZbuffer(indicesUZ(eID):indicesUZ(eID+1)-1) = [array]
+                  UZbuffer(indicesUZ(self % no_of_elements):) = [array]
                end associate
             end associate
-         end do
-         associate( e => self % elements(self % no_of_elements) ) ! last element
-            associate(array => e % storage % stats % data(no_stat_s+NCONS+1+2*NGRAD:,:,:,:))
-               UZbuffer(indicesUZ(self % no_of_elements):) = [array]
-            end associate
-         end associate
-         call mpi_type_contiguous(datasizeUZ, MPI_DOUBLE, MPI_CONTIGUOUSTYPEDATA, ierr)
-         call mpi_type_hindexed(self % no_of_elements, blocklengthsUZ, displacementsUZfile, MPI_DOUBLE, MPI_HINDEXEDTYPEFILE, ierr)
-         call mpi_type_commit(MPI_CONTIGUOUSTYPEDATA, ierr)
-         call mpi_type_commit(MPI_HINDEXEDTYPEFILE, ierr)
-         call MPI_File_set_view(fid, zeroffset, MPI_CONTIGUOUSTYPEDATA, MPI_HINDEXEDTYPEFILE, "native", MPI_INFO_NULL, ierr)
-         call mpi_file_write_all(fid, UZbuffer, 1, MPI_CONTIGUOUSTYPEDATA, MPI_STATUS_IGNORE, ierr)
-         call mpi_type_free(MPI_CONTIGUOUSTYPEDATA, ierr)
-         call mpi_type_free(MPI_HINDEXEDTYPEFILE, ierr)
-         deallocate(UZbuffer)
+            call mpi_type_contiguous(datasizeUZ, MPI_DOUBLE, MPI_CONTIGUOUSTYPEDATA, ierr)
+            call mpi_type_hindexed(self % no_of_elements, blocklengthsUZ, displacementsUZfile, MPI_DOUBLE, MPI_HINDEXEDTYPEFILE, ierr)
+            call mpi_type_commit(MPI_CONTIGUOUSTYPEDATA, ierr)
+            call mpi_type_commit(MPI_HINDEXEDTYPEFILE, ierr)
+            call MPI_File_set_view(fid, zeroffset, MPI_CONTIGUOUSTYPEDATA, MPI_HINDEXEDTYPEFILE, "native", MPI_INFO_NULL, ierr)
+            call mpi_file_write_all(fid, UZbuffer, 1, MPI_CONTIGUOUSTYPEDATA, MPI_STATUS_IGNORE, ierr)
+            call mpi_type_free(MPI_CONTIGUOUSTYPEDATA, ierr)
+            call mpi_type_free(MPI_HINDEXEDTYPEFILE, ierr)
+            deallocate(UZbuffer)
+         end if
 
          call mpi_file_close(fid, ierr)
          call SealSolutionFile(trim(name))
