@@ -66,3 +66,10 @@ horsesConverter
 
 #ford
 doc/doc_output
+
+# MPI-IO test reference data
+!Solver/test/NavierStokes/NACA0012-MPIIO/REFERENCE/
+!Solver/test/NavierStokes/NACA0012-MPIIO/REFERENCE/MESH/
+!Solver/test/NavierStokes/NACA0012-MPIIO/REFERENCE/MESH/**
+!Solver/test/NavierStokes/NACA0012-MPIIO/REFERENCE/RESULTS/
+!Solver/test/NavierStokes/NACA0012-MPIIO/REFERENCE/RESULTS/**
