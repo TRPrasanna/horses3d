@@ -3163,6 +3163,11 @@ slavecoord:             DO l = 1, 4
       subroutine HexMesh_Export(self, fileName)
          use SolutionFile
          use MPI_Process_Info
+#ifdef WITH_MPIIO
+#ifdef _HAS_MPI_
+         use mpi
+#endif
+#endif
          implicit none
          class(HexMesh),   intent(in)     :: self
          character(len=*), intent(in)     :: fileName
@@ -3175,6 +3180,23 @@ slavecoord:             DO l = 1, 4
          integer(kind=AddrInt)         :: pos
          character(len=LINE_LENGTH)    :: meshName
          real(kind=RP), parameter      :: refs(NO_OF_SAVED_REFS) = 0.0_RP
+#ifdef WITH_MPIIO
+#ifdef _HAS_MPI_
+         integer                       :: ierr, n_local, npts
+         integer                       :: mpi_rp, hdr_idx, data_idx
+         integer                       :: hdr_type, data_type
+         integer                       :: fh
+         integer                       :: hdr_count
+         integer                       :: data_count
+         integer, allocatable          :: hdr_buf(:)
+         real(kind=RP), allocatable    :: data_buf(:)
+         integer, allocatable          :: hdr_blocklens(:)
+         integer, allocatable          :: data_blocklens(:)
+         integer(kind=MPI_ADDRESS_KIND), allocatable :: hdr_displs(:)
+         integer(kind=MPI_ADDRESS_KIND), allocatable :: data_displs(:)
+         integer                       :: status(MPI_STATUS_SIZE)
+#endif
+#endif
 
 !
 !        Create file: it will be contained in ./MESH
@@ -3182,6 +3204,78 @@ slavecoord:             DO l = 1, 4
          meshName = "./MESH/" // trim(removePath(getFileName(fileName))) // ".hmesh"
          call CreateNewSolutionFile( trim(meshName), MESH_FILE, self % nodeType, &
                                      self % no_of_allElements, 0, 0.0_RP, refs)
+#ifdef WITH_MPIIO
+#ifdef _HAS_MPI_
+         if (MPI_Process % doMPIAction) then
+            n_local = self % no_of_elements
+            hdr_count = 5 * n_local
+
+            allocate(hdr_blocklens(n_local), data_blocklens(n_local))
+            allocate(hdr_displs(n_local), data_displs(n_local))
+
+            data_count = 0
+            do eID = 1, n_local
+               associate(e => self % elements(eID))
+                  npts = product(e % Nxyz + 1)
+                  data_blocklens(eID) = 3 * npts
+                  data_count = data_count + data_blocklens(eID)
+                  hdr_blocklens(eID) = 5
+                  pos = POS_INIT_DATA - 1_AddrInt + (e % globID-1)*5_AddrInt*SIZEOF_INT + 3_AddrInt*e % offsetIO*SIZEOF_RP
+                  hdr_displs(eID) = int(pos, MPI_ADDRESS_KIND)
+                  data_displs(eID) = int(pos + 5_AddrInt*SIZEOF_INT, MPI_ADDRESS_KIND)
+               end associate
+            end do
+
+            allocate(hdr_buf(hdr_count))
+            allocate(data_buf(data_count))
+
+            hdr_idx = 1
+            data_idx = 1
+            do eID = 1, n_local
+               associate(e => self % elements(eID))
+                  npts = product(e % Nxyz + 1)
+                  hdr_buf(hdr_idx:hdr_idx+4) = [4, 3, e % Nxyz(1) + 1, e % Nxyz(2) + 1, e % Nxyz(3) + 1]
+                  hdr_idx = hdr_idx + 5
+
+                  data_buf(data_idx:data_idx + 3*npts - 1) = reshape( &
+                       e % geom % x(:,0:e%Nxyz(1),0:e%Nxyz(2),0:e%Nxyz(3)) * Lref, [3*npts])
+                  data_idx = data_idx + 3*npts
+               end associate
+            end do
+
+            call MPI_Type_match_size(MPI_TYPECLASS_REAL, SIZEOF_RP, mpi_rp, ierr)
+            call MPI_File_open(MPI_COMM_WORLD, trim(meshName), MPI_MODE_WRONLY, MPI_INFO_NULL, fh, ierr)
+
+            if (n_local > 0) then
+               call MPI_Type_create_hindexed(n_local, hdr_blocklens, hdr_displs, MPI_INT, hdr_type, ierr)
+               call MPI_Type_commit(hdr_type, ierr)
+               call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, MPI_INT, hdr_type, "native", MPI_INFO_NULL, ierr)
+               call MPI_File_write_all(fh, hdr_buf, hdr_count, MPI_INT, status, ierr)
+               call MPI_Type_free(hdr_type, ierr)
+            else
+               call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, MPI_INT, MPI_INT, "native", MPI_INFO_NULL, ierr)
+               call MPI_File_write_all(fh, hdr_buf, 0, MPI_INT, status, ierr)
+            end if
+
+            if (n_local > 0) then
+               call MPI_Type_create_hindexed(n_local, data_blocklens, data_displs, mpi_rp, data_type, ierr)
+               call MPI_Type_commit(data_type, ierr)
+               call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, mpi_rp, data_type, "native", MPI_INFO_NULL, ierr)
+               call MPI_File_write_all(fh, data_buf, data_count, mpi_rp, status, ierr)
+               call MPI_Type_free(data_type, ierr)
+            else
+               call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, mpi_rp, mpi_rp, "native", MPI_INFO_NULL, ierr)
+               call MPI_File_write_all(fh, data_buf, 0, mpi_rp, status, ierr)
+            end if
+
+            call MPI_File_close(fh, ierr)
+            deallocate(hdr_buf, data_buf, hdr_blocklens, data_blocklens, hdr_displs, data_displs)
+
+            call SealSolutionFile(trim(meshName))
+            return
+         end if
+#endif
+#endif
 !
 !        Introduce all element nodal coordinates
 !        ---------------------------------------
@@ -3362,6 +3456,11 @@ slavecoord:             DO l = 1, 4
      subroutine HexMesh_SaveSolution(self, iter, time, name, saveGradients, saveSensor_, saveLES_, saveSource_)
          use SolutionFile
          use MPI_Process_Info
+#ifdef WITH_MPIIO
+#ifdef _HAS_MPI_
+         use mpi
+#endif
+#endif
          implicit none
          class(HexMesh)                         :: self
          integer,             intent(in)        :: iter
@@ -3381,6 +3480,24 @@ slavecoord:             DO l = 1, 4
          real(kind=RP)                    :: refs(NO_OF_SAVED_REFS)
          real(kind=RP), allocatable       :: Q(:,:,:,:)
          logical                          :: saveSensor, saveLES, saveSource
+#ifdef WITH_MPIIO
+#ifdef _HAS_MPI_
+         integer                          :: ierr, n_local, npts
+         integer                          :: data_len
+         integer                          :: mpi_rp, hdr_idx, data_idx
+         integer                          :: hdr_type, data_type
+         integer                          :: fh
+         integer                          :: hdr_count
+         integer                          :: data_count
+         integer, allocatable             :: hdr_buf(:)
+         real(kind=RP), allocatable       :: data_buf(:)
+         integer, allocatable             :: hdr_blocklens(:)
+         integer, allocatable             :: data_blocklens(:)
+         integer(kind=MPI_ADDRESS_KIND), allocatable :: hdr_displs(:)
+         integer(kind=MPI_ADDRESS_KIND), allocatable :: data_displs(:)
+         integer                          :: status(MPI_STATUS_SIZE)
+#endif
+#endif
 #if (!defined(NAVIERSTOKES) || !defined(INCNS))
          logical                          :: computeGradients = .true.
 #endif
@@ -3455,6 +3572,159 @@ slavecoord:             DO l = 1, 4
 !
 !        Write arrays
 !        ------------
+#ifdef WITH_MPIIO
+#ifdef _HAS_MPI_
+         if (MPI_Process % doMPIAction) then
+            n_local = self % no_of_elements
+            hdr_count = 5 * n_local
+
+            allocate(hdr_blocklens(n_local), data_blocklens(n_local))
+            allocate(hdr_displs(n_local), data_displs(n_local))
+
+            data_count = 0
+            do eID = 1, n_local
+               associate(e => self % elements(eID))
+                  npts = product(e % Nxyz + 1)
+                  data_len = NCONS * npts
+                  if ( saveGradients .and. computeGradients ) data_len = data_len + 3 * NGRAD * npts
+                  if (saveSensor) data_len = data_len + 1
+                  if (saveLES) then
+#if defined(NAVIERSTOKES) && (!(SPALARTALMARAS))
+                     data_len = data_len + 2 * npts
+#endif
+                  end if
+#ifdef FLOW
+                  if (saveSource) data_len = data_len + NCONS * npts
+#endif
+                  data_blocklens(eID) = data_len
+                  data_count = data_count + data_len
+                  hdr_blocklens(eID) = 5
+                  pos = POS_INIT_DATA - 1_AddrInt + (e % globID-1)*5_AddrInt*SIZEOF_INT + 1_AddrInt*padding*e % offsetIO * SIZEOF_RP
+                  if (saveSensor) pos = pos + (e % globID - 1) * SIZEOF_RP
+                  hdr_displs(eID) = int(pos, MPI_ADDRESS_KIND)
+                  data_displs(eID) = int(pos + 5_AddrInt*SIZEOF_INT, MPI_ADDRESS_KIND)
+               end associate
+            end do
+
+            allocate(hdr_buf(hdr_count))
+            allocate(data_buf(data_count))
+
+            hdr_idx = 1
+            data_idx = 1
+            do eID = 1, n_local
+               associate(e => self % elements(eID))
+                  npts = product(e % Nxyz + 1)
+                  hdr_buf(hdr_idx:hdr_idx+4) = [4, NCONS, e % Nxyz(1) + 1, e % Nxyz(2) + 1, e % Nxyz(3) + 1]
+                  hdr_idx = hdr_idx + 5
+
+                  allocate(Q(NCONS, 0:e % Nxyz(1), 0:e % Nxyz(2), 0:e % Nxyz(3)))
+#ifdef FLOW
+                  Q(1:NCONS,:,:,:)  = e % storage % Q
+#ifdef MULTIPHASE
+                  Q(IMP,:,:,:) = e % storage % Q(IMP,:,:,:) + e % storage % Q(IMC,:,:,:)*e % storage % mu(1,:,:,:)
+#endif
+#endif
+#if (defined(CAHNHILLIARD) && (!defined(FLOW)))
+                  Q(NCONS,:,:,:) = e % storage % c(1,:,:,:)
+#endif
+                  data_buf(data_idx:data_idx + NCONS*npts - 1) = reshape(Q, [NCONS*npts])
+                  data_idx = data_idx + NCONS*npts
+                  deallocate(Q)
+
+                  if ( saveGradients .and. computeGradients ) then
+                     allocate(Q(NGRAD,0:e % Nxyz(1), 0:e % Nxyz(2), 0:e % Nxyz(3)))
+#ifdef FLOW
+                     Q(1:NCONS,:,:,:) = e % storage % U_x
+#endif
+#if (defined(CAHNHILLIARD) && (!defined(FLOW)))
+                     Q(NGRAD,:,:,:) = e % storage % c_x(1,:,:,:)
+#endif
+                     data_buf(data_idx:data_idx + NGRAD*npts - 1) = reshape(Q, [NGRAD*npts])
+                     data_idx = data_idx + NGRAD*npts
+
+#ifdef FLOW
+                     Q(1:NCONS,:,:,:) = e % storage % U_y
+#endif
+#if (defined(CAHNHILLIARD) && (!defined(FLOW)))
+                     Q(NGRAD,:,:,:) = e % storage % c_y(1,:,:,:)
+#endif
+                     data_buf(data_idx:data_idx + NGRAD*npts - 1) = reshape(Q, [NGRAD*npts])
+                     data_idx = data_idx + NGRAD*npts
+
+#ifdef FLOW
+                     Q(1:NCONS,:,:,:) = e % storage % U_z
+#endif
+#if (defined(CAHNHILLIARD) && (!defined(FLOW)))
+                     Q(NGRAD,:,:,:) = e % storage % c_z(1,:,:,:)
+#endif
+                     data_buf(data_idx:data_idx + NGRAD*npts - 1) = reshape(Q, [NGRAD*npts])
+                     data_idx = data_idx + NGRAD*npts
+                     deallocate(Q)
+                  end if
+
+                  if (saveSensor) then
+                     data_buf(data_idx) = e % storage % sensor
+                     data_idx = data_idx + 1
+                  end if
+
+                  if (saveLES) then
+#if defined(NAVIERSTOKES) && (!(SPALARTALMARAS))
+                     allocate(Q(1,0:e % Nxyz(1), 0:e % Nxyz(2), 0:e % Nxyz(3)))
+                     Q(1,:,:,:) = e % storage % mu_NS(1,:,:,:)
+                     data_buf(data_idx:data_idx + npts - 1) = reshape(Q, [npts])
+                     data_idx = data_idx + npts
+                     Q(1,:,:,:) = e % storage % mu_turb_NS(:,:,:)
+                     data_buf(data_idx:data_idx + npts - 1) = reshape(Q, [npts])
+                     data_idx = data_idx + npts
+                     deallocate(Q)
+#endif
+                  end if
+
+#ifdef FLOW
+                  if (saveSource) then
+                     allocate(Q(1:NCONS,0:e % Nxyz(1), 0:e % Nxyz(2), 0:e % Nxyz(3)))
+                     Q = e % storage % S_NS
+                     data_buf(data_idx:data_idx + NCONS*npts - 1) = reshape(Q, [NCONS*npts])
+                     data_idx = data_idx + NCONS*npts
+                     deallocate(Q)
+                  end if
+#endif
+               end associate
+            end do
+
+            call MPI_Type_match_size(MPI_TYPECLASS_REAL, SIZEOF_RP, mpi_rp, ierr)
+            call MPI_File_open(MPI_COMM_WORLD, trim(name), MPI_MODE_WRONLY, MPI_INFO_NULL, fh, ierr)
+
+            if (n_local > 0) then
+               call MPI_Type_create_hindexed(n_local, hdr_blocklens, hdr_displs, MPI_INT, hdr_type, ierr)
+               call MPI_Type_commit(hdr_type, ierr)
+               call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, MPI_INT, hdr_type, "native", MPI_INFO_NULL, ierr)
+               call MPI_File_write_all(fh, hdr_buf, hdr_count, MPI_INT, status, ierr)
+               call MPI_Type_free(hdr_type, ierr)
+            else
+               call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, MPI_INT, MPI_INT, "native", MPI_INFO_NULL, ierr)
+               call MPI_File_write_all(fh, hdr_buf, 0, MPI_INT, status, ierr)
+            end if
+
+            if (n_local > 0) then
+               call MPI_Type_create_hindexed(n_local, data_blocklens, data_displs, mpi_rp, data_type, ierr)
+               call MPI_Type_commit(data_type, ierr)
+               call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, mpi_rp, data_type, "native", MPI_INFO_NULL, ierr)
+               call MPI_File_write_all(fh, data_buf, data_count, mpi_rp, status, ierr)
+               call MPI_Type_free(data_type, ierr)
+            else
+               call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, mpi_rp, mpi_rp, "native", MPI_INFO_NULL, ierr)
+               call MPI_File_write_all(fh, data_buf, 0, mpi_rp, status, ierr)
+            end if
+
+            call MPI_File_close(fh, ierr)
+            deallocate(hdr_buf, data_buf, hdr_blocklens, data_blocklens, hdr_displs, data_displs)
+
+            call SealSolutionFile(trim(name))
+            return
+         end if
+#endif
+#endif
          fID = putSolutionFileInWriteDataMode(trim(name))
          do eID = 1, self % no_of_elements
             associate( e => self % elements(eID) )
@@ -3559,6 +3829,24 @@ slavecoord:             DO l = 1, 4
          integer(kind=AddrInt)            :: pos
          real(kind=RP)                    :: refs(NO_OF_SAVED_REFS) 
          real(kind=RP), allocatable       :: Q(:,:,:,:)
+#ifdef WITH_MPIIO
+#ifdef _HAS_MPI_
+         integer                          :: ierr, n_local, npts
+         integer                          :: data_len
+         integer                          :: mpi_rp, hdr_idx, data_idx
+         integer                          :: hdr_type, data_type
+         integer                          :: fh
+         integer                          :: hdr_count
+         integer                          :: data_count
+         integer, allocatable             :: hdr_buf(:)
+         real(kind=RP), allocatable       :: data_buf(:)
+         integer, allocatable             :: hdr_blocklens(:)
+         integer, allocatable             :: data_blocklens(:)
+         integer(kind=MPI_ADDRESS_KIND), allocatable :: hdr_displs(:)
+         integer(kind=MPI_ADDRESS_KIND), allocatable :: data_displs(:)
+         integer                          :: status(MPI_STATUS_SIZE)
+#endif
+#endif
 !
 !        Gather reference quantities
 !        ---------------------------
@@ -3576,6 +3864,94 @@ slavecoord:             DO l = 1, 4
 !
 !        Write arrays
 !        ------------
+         no_stat_s = 9
+#ifdef WITH_MPIIO
+#ifdef _HAS_MPI_
+         if (MPI_Process % doMPIAction) then
+            n_local = self % no_of_elements
+            hdr_count = 5 * n_local
+
+            allocate(hdr_blocklens(n_local), data_blocklens(n_local))
+            allocate(hdr_displs(n_local), data_displs(n_local))
+
+            data_count = 0
+            do eID = 1, n_local
+               associate( e => self % elements(eID) )
+                  npts = product(e % Nxyz + 1)
+                  data_len = no_stat_s * npts + NCONS * npts
+                  if ( saveGradients .and. computeGradients ) data_len = data_len + 3 * NGRAD * npts
+                  data_blocklens(eID) = data_len
+                  data_count = data_count + data_len
+                  hdr_blocklens(eID) = 5
+                  pos = POS_INIT_DATA - 1_AddrInt + (e % globID-1)*5_AddrInt*SIZEOF_INT + 1_AddrInt*no_of_stats_variables*e % offsetIO*SIZEOF_RP
+                  hdr_displs(eID) = int(pos, MPI_ADDRESS_KIND)
+                  data_displs(eID) = int(pos + 5_AddrInt*SIZEOF_INT, MPI_ADDRESS_KIND)
+               end associate
+            end do
+
+            allocate(hdr_buf(hdr_count))
+            allocate(data_buf(data_count))
+
+            hdr_idx = 1
+            data_idx = 1
+            do eID = 1, n_local
+               associate( e => self % elements(eID) )
+                  npts = product(e % Nxyz + 1)
+                  hdr_buf(hdr_idx:hdr_idx+4) = [4, no_stat_s, e % Nxyz(1) + 1, e % Nxyz(2) + 1, e % Nxyz(3) + 1]
+                  hdr_idx = hdr_idx + 5
+
+                  data_buf(data_idx:data_idx + no_stat_s*npts - 1) = reshape(e % storage % stats % data(1:no_stat_s,:,:,:), [no_stat_s*npts])
+                  data_idx = data_idx + no_stat_s*npts
+
+                  data_buf(data_idx:data_idx + NCONS*npts - 1) = reshape(e % storage % stats % data(no_stat_s+1:no_stat_s+NCONS,:,:,:), [NCONS*npts])
+                  data_idx = data_idx + NCONS*npts
+
+                  if ( saveGradients .and. computeGradients ) then
+                     data_buf(data_idx:data_idx + NGRAD*npts - 1) = reshape(e % storage % stats % data(no_stat_s+NCONS+1:no_stat_s+NCONS+NGRAD,:,:,:), [NGRAD*npts])
+                     data_idx = data_idx + NGRAD*npts
+
+                     data_buf(data_idx:data_idx + NGRAD*npts - 1) = reshape(e % storage % stats % data(no_stat_s+NCONS+1+NGRAD:no_stat_s+NCONS+2*NGRAD,:,:,:), [NGRAD*npts])
+                     data_idx = data_idx + NGRAD*npts
+
+                     data_buf(data_idx:data_idx + NGRAD*npts - 1) = reshape(e % storage % stats % data(no_stat_s+NCONS+1+2*NGRAD:no_stat_s+NCONS+3*NGRAD,:,:,:), [NGRAD*npts])
+                     data_idx = data_idx + NGRAD*npts
+                  end if
+               end associate
+            end do
+
+            call MPI_Type_match_size(MPI_TYPECLASS_REAL, SIZEOF_RP, mpi_rp, ierr)
+            call MPI_File_open(MPI_COMM_WORLD, trim(name), MPI_MODE_WRONLY, MPI_INFO_NULL, fh, ierr)
+
+            if (n_local > 0) then
+               call MPI_Type_create_hindexed(n_local, hdr_blocklens, hdr_displs, MPI_INT, hdr_type, ierr)
+               call MPI_Type_commit(hdr_type, ierr)
+               call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, MPI_INT, hdr_type, "native", MPI_INFO_NULL, ierr)
+               call MPI_File_write_all(fh, hdr_buf, hdr_count, MPI_INT, status, ierr)
+               call MPI_Type_free(hdr_type, ierr)
+            else
+               call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, MPI_INT, MPI_INT, "native", MPI_INFO_NULL, ierr)
+               call MPI_File_write_all(fh, hdr_buf, 0, MPI_INT, status, ierr)
+            end if
+
+            if (n_local > 0) then
+               call MPI_Type_create_hindexed(n_local, data_blocklens, data_displs, mpi_rp, data_type, ierr)
+               call MPI_Type_commit(data_type, ierr)
+               call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, mpi_rp, data_type, "native", MPI_INFO_NULL, ierr)
+               call MPI_File_write_all(fh, data_buf, data_count, mpi_rp, status, ierr)
+               call MPI_Type_free(data_type, ierr)
+            else
+               call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, mpi_rp, mpi_rp, "native", MPI_INFO_NULL, ierr)
+               call MPI_File_write_all(fh, data_buf, 0, mpi_rp, status, ierr)
+            end if
+
+            call MPI_File_close(fh, ierr)
+            deallocate(hdr_buf, data_buf, hdr_blocklens, data_blocklens, hdr_displs, data_displs)
+
+            call SealSolutionFile(trim(name))
+            return
+         end if
+#endif
+#endif
          fID = putSolutionFileInWriteDataMode(trim(name))
          do eID = 1, self % no_of_elements
             associate( e => self % elements(eID) )
@@ -3631,6 +4007,24 @@ slavecoord:             DO l = 1, 4
          integer(kind=AddrInt)            :: pos
          real(kind=RP)                    :: refs(NO_OF_SAVED_REFS) 
          real(kind=RP), allocatable       :: Q(:,:,:,:)
+#ifdef WITH_MPIIO
+#ifdef _HAS_MPI_
+         integer                          :: ierr, n_local, npts
+         integer                          :: data_len
+         integer                          :: mpi_rp, hdr_idx, data_idx
+         integer                          :: hdr_type, data_type
+         integer                          :: fh
+         integer                          :: hdr_count
+         integer                          :: data_count
+         integer, allocatable             :: hdr_buf(:)
+         real(kind=RP), allocatable       :: data_buf(:)
+         integer, allocatable             :: hdr_blocklens(:)
+         integer, allocatable             :: data_blocklens(:)
+         integer(kind=MPI_ADDRESS_KIND), allocatable :: hdr_displs(:)
+         integer(kind=MPI_ADDRESS_KIND), allocatable :: data_displs(:)
+         integer                          :: status(MPI_STATUS_SIZE)
+#endif
+#endif
 !
 !        Gather reference quantities (//# I COPIED THESE VERBATIM. Do I reaaly need these?)
 !        ---------------------------
@@ -3648,6 +4042,94 @@ slavecoord:             DO l = 1, 4
 !
 !        Write arrays
 !        ------------
+         no_stat_s = 9
+#ifdef WITH_MPIIO
+#ifdef _HAS_MPI_
+         if (MPI_Process % doMPIAction) then
+            n_local = self % no_of_elements
+            hdr_count = 5 * n_local
+
+            allocate(hdr_blocklens(n_local), data_blocklens(n_local))
+            allocate(hdr_displs(n_local), data_displs(n_local))
+
+            data_count = 0
+            do eID = 1, n_local
+               associate( e => self % elements(eID) )
+                  npts = product(e % Nxyz + 1)
+                  data_len = no_stat_s * npts + NCONS * npts
+                  if ( saveGradients .and. computeGradients ) data_len = data_len + 3 * NGRAD * npts
+                  data_blocklens(eID) = data_len
+                  data_count = data_count + data_len
+                  hdr_blocklens(eID) = 5
+                  pos = POS_INIT_DATA - 1_AddrInt + (e % globID-1)*5_AddrInt*SIZEOF_INT + 1_AddrInt*no_of_stats_variables*e % offsetIO*SIZEOF_RP
+                  hdr_displs(eID) = int(pos, MPI_ADDRESS_KIND)
+                  data_displs(eID) = int(pos + 5_AddrInt*SIZEOF_INT, MPI_ADDRESS_KIND)
+               end associate
+            end do
+
+            allocate(hdr_buf(hdr_count))
+            allocate(data_buf(data_count))
+
+            hdr_idx = 1
+            data_idx = 1
+            do eID = 1, n_local
+               associate( e => self % elements(eID) )
+                  npts = product(e % Nxyz + 1)
+                  hdr_buf(hdr_idx:hdr_idx+4) = [4, no_stat_s, e % Nxyz(1) + 1, e % Nxyz(2) + 1, e % Nxyz(3) + 1]
+                  hdr_idx = hdr_idx + 5
+
+                  data_buf(data_idx:data_idx + no_stat_s*npts - 1) = reshape(e % storage % stats % data(1:no_stat_s,:,:,:), [no_stat_s*npts])
+                  data_idx = data_idx + no_stat_s*npts
+
+                  data_buf(data_idx:data_idx + NCONS*npts - 1) = reshape(e % storage % stats % data(no_stat_s+1:no_stat_s+NCONS,:,:,:), [NCONS*npts])
+                  data_idx = data_idx + NCONS*npts
+
+                  if ( saveGradients .and. computeGradients ) then
+                     data_buf(data_idx:data_idx + NGRAD*npts - 1) = reshape(e % storage % stats % data(no_stat_s+NCONS+1:no_stat_s+NCONS+NGRAD,:,:,:), [NGRAD*npts])
+                     data_idx = data_idx + NGRAD*npts
+
+                     data_buf(data_idx:data_idx + NGRAD*npts - 1) = reshape(e % storage % stats % data(no_stat_s+NCONS+1+NGRAD:no_stat_s+NCONS+2*NGRAD,:,:,:), [NGRAD*npts])
+                     data_idx = data_idx + NGRAD*npts
+
+                     data_buf(data_idx:data_idx + NGRAD*npts - 1) = reshape(e % storage % stats % data(no_stat_s+NCONS+1+2*NGRAD:no_stat_s+NCONS+3*NGRAD,:,:,:), [NGRAD*npts])
+                     data_idx = data_idx + NGRAD*npts
+                  end if
+               end associate
+            end do
+
+            call MPI_Type_match_size(MPI_TYPECLASS_REAL, SIZEOF_RP, mpi_rp, ierr)
+            call MPI_File_open(MPI_COMM_WORLD, trim(name), MPI_MODE_WRONLY, MPI_INFO_NULL, fh, ierr)
+
+            if (n_local > 0) then
+               call MPI_Type_create_hindexed(n_local, hdr_blocklens, hdr_displs, MPI_INT, hdr_type, ierr)
+               call MPI_Type_commit(hdr_type, ierr)
+               call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, MPI_INT, hdr_type, "native", MPI_INFO_NULL, ierr)
+               call MPI_File_write_all(fh, hdr_buf, hdr_count, MPI_INT, status, ierr)
+               call MPI_Type_free(hdr_type, ierr)
+            else
+               call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, MPI_INT, MPI_INT, "native", MPI_INFO_NULL, ierr)
+               call MPI_File_write_all(fh, hdr_buf, 0, MPI_INT, status, ierr)
+            end if
+
+            if (n_local > 0) then
+               call MPI_Type_create_hindexed(n_local, data_blocklens, data_displs, mpi_rp, data_type, ierr)
+               call MPI_Type_commit(data_type, ierr)
+               call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, mpi_rp, data_type, "native", MPI_INFO_NULL, ierr)
+               call MPI_File_write_all(fh, data_buf, data_count, mpi_rp, status, ierr)
+               call MPI_Type_free(data_type, ierr)
+            else
+               call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, mpi_rp, mpi_rp, "native", MPI_INFO_NULL, ierr)
+               call MPI_File_write_all(fh, data_buf, 0, mpi_rp, status, ierr)
+            end if
+
+            call MPI_File_close(fh, ierr)
+            deallocate(hdr_buf, data_buf, hdr_blocklens, data_blocklens, hdr_displs, data_displs)
+
+            call SealSolutionFile(trim(name))
+            return
+         end if
+#endif
+#endif
          fID = putSolutionFileInWriteDataMode(trim(name))
          do eID = 1, self % no_of_elements
             associate( e => self % elements(eID) )

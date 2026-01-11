@@ -589,6 +589,12 @@ Module SpongeClass  !
 !
     Subroutine  WriteBaseFlowSponge(self,mesh,iter,time,last)
         use FluidData, only: thermodynamics, refValues, dimensionless
+        use MPI_Process_Info
+#ifdef WITH_MPIIO
+#ifdef _HAS_MPI_
+        use mpi
+#endif
+#endif
         Implicit None
         class(sponge_t)                                         :: self
         type(HexMesh), intent(in)                               :: mesh
@@ -607,6 +613,24 @@ Module SpongeClass  !
         integer, dimension(NDIM)                                :: Nxyz
         character(len=LINE_LENGTH)                              :: name
         logical                                                 :: notAddIter
+#ifdef WITH_MPIIO
+#ifdef _HAS_MPI_
+        integer                          :: ierr, n_local, npts
+        integer                          :: data_len
+        integer                          :: mpi_rp, hdr_idx, data_idx
+        integer                          :: hdr_type, data_type
+        integer                          :: fh
+        integer                          :: hdr_count
+        integer                          :: data_count
+        integer, allocatable             :: hdr_buf(:)
+        real(kind=RP), allocatable       :: data_buf(:)
+        integer, allocatable             :: hdr_blocklens(:)
+        integer, allocatable             :: data_blocklens(:)
+        integer(kind=MPI_ADDRESS_KIND), allocatable :: hdr_displs(:)
+        integer(kind=MPI_ADDRESS_KIND), allocatable :: data_displs(:)
+        integer                          :: status(MPI_STATUS_SIZE)
+#endif
+#endif
 
 !       Check if is activated
 !       ------------------------
@@ -662,6 +686,81 @@ Module SpongeClass  !
 !
 !       Write arrays
 !       ------------
+#ifdef WITH_MPIIO
+#ifdef _HAS_MPI_
+        if (MPI_Process % doMPIAction) then
+            n_local = mesh % no_of_elements
+            hdr_count = 5 * n_local
+
+            allocate(hdr_blocklens(n_local), data_blocklens(n_local))
+            allocate(hdr_displs(n_local), data_displs(n_local))
+
+            data_count = 0
+            do eID = 1, n_local
+                associate( e => mesh % elements(eID) )
+                    npts = product(e % Nxyz + 1)
+                    data_len = NCONS * npts
+                    data_blocklens(eID) = data_len
+                    data_count = data_count + data_len
+                    hdr_blocklens(eID) = 5
+                    pos = POS_INIT_DATA - 1_AddrInt + (e % globID-1)*5_AddrInt*SIZEOF_INT + 1_AddrInt*padding*e % offsetIO * SIZEOF_RP
+                    hdr_displs(eID) = int(pos, MPI_ADDRESS_KIND)
+                    data_displs(eID) = int(pos + 5_AddrInt*SIZEOF_INT, MPI_ADDRESS_KIND)
+                end associate
+            end do
+
+            allocate(hdr_buf(hdr_count))
+            allocate(data_buf(data_count))
+
+            hdr_idx = 1
+            data_idx = 1
+            do eID = 1, n_local
+                associate( e => mesh % elements(eID) )
+                    npts = product(e % Nxyz + 1)
+                    hdr_buf(hdr_idx:hdr_idx+4) = [4, NCONS, e % Nxyz(1) + 1, e % Nxyz(2) + 1, e % Nxyz(3) + 1]
+                    hdr_idx = hdr_idx + 5
+
+                    allocate(Q(NCONS, 0:e % Nxyz(1), 0:e % Nxyz(2), 0:e % Nxyz(3)))
+                    Q(1:NCONS,:,:,:)  = e % storage % QbaseSponge(:,:,:,:)
+                    data_buf(data_idx:data_idx + NCONS*npts - 1) = reshape(Q, [NCONS*npts])
+                    data_idx = data_idx + NCONS*npts
+                    deallocate(Q)
+                end associate
+            end do
+
+            call MPI_Type_match_size(MPI_TYPECLASS_REAL, SIZEOF_RP, mpi_rp, ierr)
+            call MPI_File_open(MPI_COMM_WORLD, trim(name), MPI_MODE_WRONLY, MPI_INFO_NULL, fh, ierr)
+
+            if (n_local > 0) then
+                call MPI_Type_create_hindexed(n_local, hdr_blocklens, hdr_displs, MPI_INT, hdr_type, ierr)
+                call MPI_Type_commit(hdr_type, ierr)
+                call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, MPI_INT, hdr_type, "native", MPI_INFO_NULL, ierr)
+                call MPI_File_write_all(fh, hdr_buf, hdr_count, MPI_INT, status, ierr)
+                call MPI_Type_free(hdr_type, ierr)
+            else
+                call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, MPI_INT, MPI_INT, "native", MPI_INFO_NULL, ierr)
+                call MPI_File_write_all(fh, hdr_buf, 0, MPI_INT, status, ierr)
+            end if
+
+            if (n_local > 0) then
+                call MPI_Type_create_hindexed(n_local, data_blocklens, data_displs, mpi_rp, data_type, ierr)
+                call MPI_Type_commit(data_type, ierr)
+                call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, mpi_rp, data_type, "native", MPI_INFO_NULL, ierr)
+                call MPI_File_write_all(fh, data_buf, data_count, mpi_rp, status, ierr)
+                call MPI_Type_free(data_type, ierr)
+            else
+                call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, mpi_rp, mpi_rp, "native", MPI_INFO_NULL, ierr)
+                call MPI_File_write_all(fh, data_buf, 0, mpi_rp, status, ierr)
+            end if
+
+            call MPI_File_close(fh, ierr)
+            deallocate(hdr_buf, data_buf, hdr_blocklens, data_blocklens, hdr_displs, data_displs)
+
+            call SealSolutionFile(trim(name))
+            return
+        end if
+#endif
+#endif
         fID = putSolutionFileInWriteDataMode(trim(name))
 
         do eID = 1, mesh % no_of_elements

@@ -18,6 +18,7 @@ WITH_PETSC?=NO
 WITH_METIS?=NO
 WITH_HDF5?=NO
 WITH_MKL?=NO
+WITH_MPIIO?=NO
 
 MAKE=make
 AR=ar
@@ -33,6 +34,10 @@ LIBS =
 MACROS = 
 EXTLIB_INC =
 -include $(HOME_DIR)/make.inc
+
+ifeq ($(WITH_MPIIO),YES)
+  MACROS += -DWITH_MPIIO
+endif
 
 ########################################
 # 3.- User defined compilation flags 

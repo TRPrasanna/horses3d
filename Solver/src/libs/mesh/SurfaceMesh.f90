@@ -740,6 +740,11 @@ Module SurfaceMesh
       use SolutionFile
       use fluiddata
       use PhysicsStorage
+#ifdef WITH_MPIIO
+#ifdef _HAS_MPI_
+      use mpi
+#endif
+#endif
 
       implicit none
 
@@ -764,6 +769,24 @@ Module SurfaceMesh
       integer(kind=AddrInt)                                :: pos
       real(kind=RP)                                        :: refs(NO_OF_SAVED_REFS) 
       logical                                              :: saveQdot
+#ifdef WITH_MPIIO
+#ifdef _HAS_MPI_
+      integer                                              :: n_local, npts
+      integer                                              :: data_len
+      integer                                              :: mpi_rp, hdr_idx, data_idx
+      integer                                              :: hdr_type, data_type
+      integer                                              :: fh
+      integer                                              :: hdr_count
+      integer                                              :: data_count
+      integer, allocatable                                 :: hdr_buf(:)
+      real(kind=RP), allocatable                           :: data_buf(:)
+      integer, allocatable                                 :: hdr_blocklens(:)
+      integer, allocatable                                 :: data_blocklens(:)
+      integer(kind=MPI_ADDRESS_KIND), allocatable           :: hdr_displs(:)
+      integer(kind=MPI_ADDRESS_KIND), allocatable           :: data_displs(:)
+      integer                                              :: status(MPI_STATUS_SIZE)
+#endif
+#endif
 #if (defined(CAHNHILLIARD)) && (!defined(MULTIPHASE))
       logical                                              :: computeGradients = .true.
 #endif
@@ -835,6 +858,154 @@ Module SurfaceMesh
 !
 !     Write arrays
 !     ------------
+#ifdef WITH_MPIIO
+#ifdef _HAS_MPI_
+      if (MPI_Process % doMPIAction) then
+          n_local = surface_zone % no_of_faces
+          hdr_count = 4 * n_local
+
+          allocate(hdr_blocklens(n_local), data_blocklens(n_local))
+          allocate(hdr_displs(n_local), data_displs(n_local))
+
+          data_count = 0
+          do zoneFaceID = 1, n_local
+              meshFaceID = surface_zone % faces(zoneFaceID)
+              f => mesh % faces(meshFaceID)
+              Nx = f % Nf(1)
+              Ny = f % Nf(2)
+              npts = (Nx + 1) * (Ny + 1)
+              data_len = NCONS * npts
+              if (saveQdot) data_len = data_len + NCONS * npts
+              if ( saveGradients .and. computeGradients ) data_len = data_len + 3 * NGRAD * npts
+#if defined(NAVIERSTOKES)
+              if (saveUt) data_len = data_len + npts
+              if (saveTurb) data_len = data_len + 2 * npts
+#endif
+              data_blocklens(zoneFaceID) = data_len
+              data_count = data_count + data_len
+              hdr_blocklens(zoneFaceID) = 4
+              pos = POS_INIT_DATA - 1_AddrInt + (fGlobID(zoneFaceID)-1)*4_AddrInt*SIZEOF_INT + padding * faceOffset(zoneFaceID) * SIZEOF_RP
+              hdr_displs(zoneFaceID) = int(pos, MPI_ADDRESS_KIND)
+              data_displs(zoneFaceID) = int(pos + 4_AddrInt*SIZEOF_INT, MPI_ADDRESS_KIND)
+          end do
+
+          allocate(hdr_buf(hdr_count))
+          allocate(data_buf(data_count))
+
+          hdr_idx = 1
+          data_idx = 1
+          do zoneFaceID = 1, n_local
+              meshFaceID = surface_zone % faces(zoneFaceID)
+              f => mesh % faces(meshFaceID)
+              Nx = f % Nf(1)
+              Ny = f % Nf(2)
+              npts = (Nx + 1) * (Ny + 1)
+
+              hdr_buf(hdr_idx:hdr_idx+3) = [3, NCONS, Nx + 1, Ny + 1]
+              hdr_idx = hdr_idx + 4
+
+              allocate (Q(1:NCONS,0:Nx,0:Ny))
+              Q(1:NCONS,:,:)  = f % storage(eSides(zoneFaceID)) % Q(:,:,:)
+              data_buf(data_idx:data_idx + NCONS*npts - 1) = reshape(Q, [NCONS*npts])
+              data_idx = data_idx + NCONS*npts
+              deallocate(Q)
+
+              if (saveQdot) then
+                  allocate (Q(1:NCONS,0:Nx,0:Ny))
+                  Q(1:NCONS,:,:)  = f % storage(eSides(zoneFaceID)) % Qdot(:,:,:)
+                  data_buf(data_idx:data_idx + NCONS*npts - 1) = reshape(Q, [NCONS*npts])
+                  data_idx = data_idx + NCONS*npts
+                  deallocate(Q)
+              end if
+
+              if ( saveGradients .and. computeGradients ) then
+                  allocate(Q(1:NGRAD,0:Nx,0:Ny))
+#ifdef FLOW
+                  Q(1:NGRAD,:,:) = f % storage(eSides(zoneFaceID)) % U_x
+#endif
+#if (defined(CAHNHILLIARD) && (!defined(FLOW)))
+                  Q(1:NGRAD,:,:) = f % storage(eSides(zoneFaceID)) % c_x
+#endif
+                  data_buf(data_idx:data_idx + NGRAD*npts - 1) = reshape(Q, [NGRAD*npts])
+                  data_idx = data_idx + NGRAD*npts
+
+#ifdef FLOW
+                  Q(1:NGRAD,:,:) = f % storage(eSides(zoneFaceID)) % U_y
+#endif
+#if (defined(CAHNHILLIARD) && (!defined(FLOW)))
+                  Q(1:NGRAD,:,:) = f % storage(eSides(zoneFaceID)) % c_y
+#endif
+                  data_buf(data_idx:data_idx + NGRAD*npts - 1) = reshape(Q, [NGRAD*npts])
+                  data_idx = data_idx + NGRAD*npts
+
+#ifdef FLOW
+                  Q(1:NGRAD,:,:) = f % storage(eSides(zoneFaceID)) % U_z
+#endif
+#if (defined(CAHNHILLIARD) && (!defined(FLOW)))
+                  Q(1:NGRAD,:,:) = f % storage(eSides(zoneFaceID)) % c_z
+#endif
+                  data_buf(data_idx:data_idx + NGRAD*npts - 1) = reshape(Q, [NGRAD*npts])
+                  data_idx = data_idx + NGRAD*npts
+                  deallocate(Q)
+              end if
+
+              if (saveUt) then
+#if defined(NAVIERSTOKES)
+                  allocate(Q(1,0:Nx,0:Ny))
+                  Q(1,:,:)= f % storage(eSides(zoneFaceID)) % u_tau_NS(:,:)
+                  data_buf(data_idx:data_idx + npts - 1) = reshape(Q, [npts])
+                  data_idx = data_idx + npts
+                  deallocate(Q)
+#endif
+              end if
+              if (saveTurb) then
+#if defined(NAVIERSTOKES)
+                  allocate(Q(1,0:Nx,0:Ny))
+                  Q(1,:,:)= f % storage(1) % mu_NS(1,:,:)
+                  data_buf(data_idx:data_idx + npts - 1) = reshape(Q, [npts])
+                  data_idx = data_idx + npts
+                  Q(1,:,:)= f % storage(1) % wallNodeDistance(:,:)
+                  data_buf(data_idx:data_idx + npts - 1) = reshape(Q, [npts])
+                  data_idx = data_idx + npts
+                  deallocate(Q)
+#endif
+              end if
+          end do
+
+          call MPI_Type_match_size(MPI_TYPECLASS_REAL, SIZEOF_RP, mpi_rp, ierr)
+          call MPI_File_open(MPI_COMM_WORLD, trim(name), MPI_MODE_WRONLY, MPI_INFO_NULL, fh, ierr)
+
+          if (n_local > 0) then
+              call MPI_Type_create_hindexed(n_local, hdr_blocklens, hdr_displs, MPI_INT, hdr_type, ierr)
+              call MPI_Type_commit(hdr_type, ierr)
+              call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, MPI_INT, hdr_type, "native", MPI_INFO_NULL, ierr)
+              call MPI_File_write_all(fh, hdr_buf, hdr_count, MPI_INT, status, ierr)
+              call MPI_Type_free(hdr_type, ierr)
+          else
+              call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, MPI_INT, MPI_INT, "native", MPI_INFO_NULL, ierr)
+              call MPI_File_write_all(fh, hdr_buf, 0, MPI_INT, status, ierr)
+          end if
+
+          if (n_local > 0) then
+              call MPI_Type_create_hindexed(n_local, data_blocklens, data_displs, mpi_rp, data_type, ierr)
+              call MPI_Type_commit(data_type, ierr)
+              call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, mpi_rp, data_type, "native", MPI_INFO_NULL, ierr)
+              call MPI_File_write_all(fh, data_buf, data_count, mpi_rp, status, ierr)
+              call MPI_Type_free(data_type, ierr)
+          else
+              call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, mpi_rp, mpi_rp, "native", MPI_INFO_NULL, ierr)
+              call MPI_File_write_all(fh, data_buf, 0, mpi_rp, status, ierr)
+          end if
+
+          call MPI_File_close(fh, ierr)
+          deallocate(hdr_buf, data_buf, hdr_blocklens, data_blocklens, hdr_displs, data_displs)
+
+          call SealSolutionFile(trim(name))
+          nullify(f)
+          return
+      end if
+#endif
+#endif
       fID = putSolutionFileInWriteDataMode(trim(name))
 !     Loop the zone to get faces
 !     ---------------------------------------
@@ -1331,6 +1502,11 @@ Module SurfaceMesh
       use SolutionFile
       use PhysicsStorage, only: Lref
       use FileReadingUtilities, only: removePath, getFileName
+#ifdef WITH_MPIIO
+#ifdef _HAS_MPI_
+      use mpi
+#endif
+#endif
       implicit none
       class (Zone_t), intent(in)                           :: surface_zone
       class (HexMesh), intent(in)                          :: mesh
@@ -1341,9 +1517,28 @@ Module SurfaceMesh
       ! local variables
       integer                                              :: zoneFaceID, meshFaceID
       integer                                              :: fid
+      integer                                              :: ierr
       integer(kind=AddrInt)                                :: pos
       character(len=LINE_LENGTH)                           :: meshName
       real(kind=RP), parameter                             :: refs(NO_OF_SAVED_REFS) = 0.0_RP
+      real(kind=RP), allocatable                           :: Q(:,:,:)
+#ifdef WITH_MPIIO
+#ifdef _HAS_MPI_
+      integer                                              :: n_local, npts
+      integer                                              :: mpi_rp, hdr_idx, data_idx
+      integer                                              :: hdr_type, data_type
+      integer                                              :: fh
+      integer                                              :: hdr_count
+      integer                                              :: data_count
+      integer, allocatable                                 :: hdr_buf(:)
+      real(kind=RP), allocatable                           :: data_buf(:)
+      integer, allocatable                                 :: hdr_blocklens(:)
+      integer, allocatable                                 :: data_blocklens(:)
+      integer(kind=MPI_ADDRESS_KIND), allocatable           :: hdr_displs(:)
+      integer(kind=MPI_ADDRESS_KIND), allocatable           :: data_displs(:)
+      integer                                              :: status(MPI_STATUS_SIZE)
+#endif
+#endif
 
 !
 !     Create file: it will be contained in ./MESH
@@ -1354,6 +1549,81 @@ Module SurfaceMesh
 !
 !     Write arrays
 !     ------------
+#ifdef WITH_MPIIO
+#ifdef _HAS_MPI_
+       if (MPI_Process % doMPIAction) then
+           n_local = surface_zone % no_of_faces
+           hdr_count = 4 * n_local
+
+           allocate(hdr_blocklens(n_local), data_blocklens(n_local))
+           allocate(hdr_displs(n_local), data_displs(n_local))
+
+           data_count = 0
+           do zoneFaceID = 1, n_local
+               meshFaceID = surface_zone % faces(zoneFaceID)
+               associate( f => mesh % faces(meshFaceID) )
+                   npts = (f % Nf(1) + 1) * (f % Nf(2) + 1)
+                   data_blocklens(zoneFaceID) = 3 * npts
+                   data_count = data_count + data_blocklens(zoneFaceID)
+                   hdr_blocklens(zoneFaceID) = 4
+                   pos = POS_INIT_DATA - 1_AddrInt + (fGlobID(zoneFaceID)-1)*4_AddrInt*SIZEOF_INT + 3_AddrInt * faceOffset(zoneFaceID) * SIZEOF_RP
+                   hdr_displs(zoneFaceID) = int(pos, MPI_ADDRESS_KIND)
+                   data_displs(zoneFaceID) = int(pos + 4_AddrInt*SIZEOF_INT, MPI_ADDRESS_KIND)
+               end associate
+           end do
+
+           allocate(hdr_buf(hdr_count))
+           allocate(data_buf(data_count))
+
+           hdr_idx = 1
+           data_idx = 1
+           do zoneFaceID = 1, n_local
+               meshFaceID = surface_zone % faces(zoneFaceID)
+               associate( f => mesh % faces(meshFaceID) )
+                   hdr_buf(hdr_idx:hdr_idx+3) = [3, 3, f % Nf(1) + 1, f % Nf(2) + 1]
+                   hdr_idx = hdr_idx + 4
+
+                   allocate(Q(3,0:f % Nf(1),0:f % Nf(2)))
+                   Q = f % geom % x(:,0:f%Nf(1),0:f%Nf(2)) * Lref
+                   data_buf(data_idx:data_idx + 3*npts - 1) = reshape(Q, [3*npts])
+                   data_idx = data_idx + 3*npts
+                   deallocate(Q)
+               end associate
+           end do
+
+           call MPI_Type_match_size(MPI_TYPECLASS_REAL, SIZEOF_RP, mpi_rp, ierr)
+           call MPI_File_open(MPI_COMM_WORLD, trim(meshName), MPI_MODE_WRONLY, MPI_INFO_NULL, fh, ierr)
+
+           if (n_local > 0) then
+               call MPI_Type_create_hindexed(n_local, hdr_blocklens, hdr_displs, MPI_INT, hdr_type, ierr)
+               call MPI_Type_commit(hdr_type, ierr)
+               call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, MPI_INT, hdr_type, "native", MPI_INFO_NULL, ierr)
+               call MPI_File_write_all(fh, hdr_buf, hdr_count, MPI_INT, status, ierr)
+               call MPI_Type_free(hdr_type, ierr)
+           else
+               call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, MPI_INT, MPI_INT, "native", MPI_INFO_NULL, ierr)
+               call MPI_File_write_all(fh, hdr_buf, 0, MPI_INT, status, ierr)
+           end if
+
+           if (n_local > 0) then
+               call MPI_Type_create_hindexed(n_local, data_blocklens, data_displs, mpi_rp, data_type, ierr)
+               call MPI_Type_commit(data_type, ierr)
+               call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, mpi_rp, data_type, "native", MPI_INFO_NULL, ierr)
+               call MPI_File_write_all(fh, data_buf, data_count, mpi_rp, status, ierr)
+               call MPI_Type_free(data_type, ierr)
+           else
+               call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, mpi_rp, mpi_rp, "native", MPI_INFO_NULL, ierr)
+               call MPI_File_write_all(fh, data_buf, 0, mpi_rp, status, ierr)
+           end if
+
+           call MPI_File_close(fh, ierr)
+           deallocate(hdr_buf, data_buf, hdr_blocklens, data_blocklens, hdr_displs, data_displs)
+
+           call SealSolutionFile(trim(meshName))
+           return
+       end if
+#endif
+#endif
        fID = putSolutionFileInWriteDataMode(trim(meshName))
 
 !     Loop the zone to get faces
